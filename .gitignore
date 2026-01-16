@@ -16,3 +16,6 @@ qdrant/
 .DS_Store
 Thumbs.db
 .vscode/
+
+data/
+ppocr_results/
