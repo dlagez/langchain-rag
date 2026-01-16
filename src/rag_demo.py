@@ -15,6 +15,8 @@ from util.util import (
     _collection_exists,
     _docs_from_search_results,
     _docs_have_keyword_hits,
+    _extract_source_hint,
+    _filter_docs_by_source_hint,
     _format_context,
     _get_qdrant_client,
     _hybrid_rerank,
@@ -22,6 +24,7 @@ from util.util import (
     _LazyOCR,
     _load_manifest,
     _manifest_matches,
+    _merge_docs,
     _qdrant_location,
     _recreate_collection,
     _response_text,
@@ -44,18 +47,27 @@ def retrieve_documents(
     alpha: float = 0.7,
 ) -> tuple[list[Document], str]:
     fetch_k = max(fetch_k, k)
+    source_hint = _extract_source_hint(query)
+    fallback_docs = (
+        _filter_docs_by_source_hint(raw_docs, source_hint) if source_hint else raw_docs
+    )
     query_vec = embedder.embed_query(query)
     results = _search_qdrant(client, collection_name, query_vec, limit=fetch_k)
     docs, vector_scores = _docs_from_search_results(results)
+    docs = _filter_docs_by_source_hint(docs, source_hint)
     docs = _hybrid_rerank(query, docs, vector_scores, k=k, alpha=alpha)
+    keyword_docs = _keyword_fallback(fallback_docs, query, limit=min(3, k))
+    if keyword_docs:
+        if docs:
+            docs = _merge_docs(keyword_docs, docs)[:k]
+            return docs, "hybrid+keyword"
+        return keyword_docs, "keyword_fallback"
     if not docs:
-        fallback = _keyword_fallback(raw_docs, query, limit=min(3, k))
-        return (fallback, "keyword_fallback") if fallback else ([], "none")
+        return (keyword_docs, "keyword_fallback") if keyword_docs else ([], "none")
 
     if not _docs_have_keyword_hits(docs, query):
-        fallback = _keyword_fallback(raw_docs, query, limit=min(3, k))
-        if fallback:
-            return fallback, "keyword_fallback"
+        if keyword_docs:
+            return keyword_docs, "keyword_fallback"
 
     return docs, "hybrid"
 
@@ -148,7 +160,7 @@ def main() -> None:
     model = os.getenv("GOOGLE_MODEL", "gemini-1.5-flash")
     llm = ChatGoogleGenerativeAI(model=model, temperature=0)
 
-    question = args.question or os.getenv("QUESTION") or "投标人基本情况是什么？."
+    question = args.question or os.getenv("QUESTION") or "投标人基本情况是什么，联系人是谁，联系方式是什么？"
     question = question.strip()
     if not question:
         return
@@ -177,6 +189,7 @@ def main() -> None:
     )
     response = llm.invoke(prompt)
 
+    print("Question:\n", question)
     print("Answer:\n", _response_text(response.content))
     print(f"\nRetrieval: {strategy}")
     print("\nSources:")

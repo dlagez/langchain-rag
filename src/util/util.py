@@ -19,6 +19,20 @@ from ppocr_pdf_tool import LocalPPOCRTool
 
 _CJK_RE = re.compile(r"[\u4e00-\u9fff]+")
 _WORD_RE = re.compile(r"[A-Za-z0-9]+")
+_ATTACHMENT_RE = re.compile(r"附件\s*([0-9]+)")
+_ATTACHMENT_CN_RE = re.compile(r"附件\s*([一二三四五六七八九十])")
+_CN_NUM_MAP = {
+    "一": "1",
+    "二": "2",
+    "三": "3",
+    "四": "4",
+    "五": "5",
+    "六": "6",
+    "七": "7",
+    "八": "8",
+    "九": "9",
+    "十": "10",
+}
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +68,31 @@ def _query_terms(query: str) -> tuple[list[str], list[str]]:
     if len(latin) > 32:
         latin = latin[:32]
     return cjk, latin
+
+
+def _extract_source_hint(query: str) -> str | None:
+    match = _ATTACHMENT_RE.search(query)
+    if match:
+        return f"附件{match.group(1)}"
+    match = _ATTACHMENT_CN_RE.search(query)
+    if match:
+        number = _CN_NUM_MAP.get(match.group(1))
+        if number:
+            return f"附件{number}"
+    return None
+
+
+def _filter_docs_by_source_hint(
+    docs: list[Document], source_hint: str | None
+) -> list[Document]:
+    if not source_hint:
+        return docs
+    filtered: list[Document] = []
+    for doc in docs:
+        source = doc.metadata.get("source") or ""
+        if source_hint in Path(source).name:
+            filtered.append(doc)
+    return filtered or docs
 
 
 def _keyword_score(text: str, cjk_keywords: list[str], latin_keywords: list[str]) -> int:
@@ -615,3 +654,22 @@ def _response_text(content) -> str:
                     parts.append(text)
         return "\n".join(part for part in parts if part).strip()
     return str(content)
+
+
+def _doc_signature(doc: Document) -> tuple:
+    source = doc.metadata.get("source")
+    page = doc.metadata.get("page")
+    content_hash = hashlib.sha256(doc.page_content.encode("utf-8")).hexdigest()
+    return (source, page, content_hash)
+
+
+def _merge_docs(primary: list[Document], secondary: list[Document]) -> list[Document]:
+    seen = set()
+    merged: list[Document] = []
+    for doc in primary + secondary:
+        key = _doc_signature(doc)
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(doc)
+    return merged
