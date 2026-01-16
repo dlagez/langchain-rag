@@ -1,19 +1,30 @@
 from __future__ import annotations
 
+import argparse
+import hashlib
 import json
+import logging
 import os
 import re
+import shutil
+import subprocess
+import tempfile
 from pathlib import Path
 
 from dotenv import load_dotenv
-from langchain_community.document_loaders import TextLoader
-from langchain_community.vectorstores import Qdrant
 from langchain_core.documents import Document
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+import numpy as np
 from qdrant_client import QdrantClient
+from qdrant_client.http.models import Distance, PointStruct, VectorParams
+
+from ppocr_pdf_tool import LocalPPOCRTool
 
 _CJK_RE = re.compile(r"[\u4e00-\u9fff]+")
+_WORD_RE = re.compile(r"[A-Za-z0-9]+")
+
+logger = logging.getLogger(__name__)
 
 
 def _cjk_ngrams(text: str, min_size: int = 2, max_size: int = 4) -> list[str]:
@@ -32,210 +43,733 @@ def _cjk_ngrams(text: str, min_size: int = 2, max_size: int = 4) -> list[str]:
     return deduped
 
 
-def _query_keywords(query: str) -> list[str]:
-    strong = _cjk_ngrams(query, min_size=3, max_size=5)
-    if strong:
-        return strong
-    return _cjk_ngrams(query, min_size=2, max_size=4)
+def _latin_keywords(text: str) -> list[str]:
+    tokens = [token.lower() for token in _WORD_RE.findall(text) if len(token) > 1]
+    return list(dict.fromkeys(tokens))
+
+
+def _query_terms(query: str) -> tuple[list[str], list[str]]:
+    cjk = _cjk_ngrams(query, min_size=3, max_size=5)
+    if not cjk:
+        cjk = _cjk_ngrams(query, min_size=2, max_size=4)
+    if len(cjk) > 64:
+        cjk = cjk[:64]
+    latin = _latin_keywords(query)
+    if len(latin) > 32:
+        latin = latin[:32]
+    return cjk, latin
+
+
+def _keyword_score(text: str, cjk_keywords: list[str], latin_keywords: list[str]) -> int:
+    score = 0
+    for kw in cjk_keywords:
+        if kw in text:
+            score += len(kw)
+    if latin_keywords:
+        lowered = text.lower()
+        for kw in latin_keywords:
+            if kw in lowered:
+                score += len(kw)
+    return score
 
 
 def _docs_have_keyword_hits(docs: list[Document], query: str) -> bool:
-    keywords = _query_keywords(query)
-    if not keywords:
+    cjk, latin = _query_terms(query)
+    if not cjk and not latin:
         return True
     for doc in docs:
-        text = doc.page_content
-        if any(kw in text for kw in keywords):
+        if _keyword_score(doc.page_content, cjk, latin):
             return True
     return False
 
 
 def _keyword_fallback(docs: list[Document], query: str, limit: int = 3) -> list[Document]:
-    keywords = _query_keywords(query)
-    if not keywords:
+    cjk, latin = _query_terms(query)
+    if not cjk and not latin:
         return []
     scored = []
     for doc in docs:
-        text = doc.page_content
-        score = 0
-        for kw in keywords:
-            if kw in text:
-                score += len(kw)
+        score = _keyword_score(doc.page_content, cjk, latin)
         if score:
             scored.append((score, doc))
     scored.sort(key=lambda item: (-item[0], item[1].metadata.get("page") or 0))
     return [doc for _, doc in scored[:limit]]
 
 
-def _extract_texts(value) -> list[str]:
-    texts = []
-    if isinstance(value, str):
-        texts.append(value)
-        return texts
-    if isinstance(value, list):
-        if value and isinstance(value[0], (list, tuple)) and len(value[0]) >= 2:
-            for line in value:
-                if (
-                    isinstance(line, (list, tuple))
-                    and len(line) >= 2
-                    and isinstance(line[1], (list, tuple))
-                    and line[1]
-                ):
-                    text = line[1][0]
-                    if isinstance(text, str):
-                        texts.append(text)
-            if texts:
-                return texts
-        for item in value:
-            texts.extend(_extract_texts(item))
-        return texts
-    if isinstance(value, dict):
-        if isinstance(value.get("text"), str):
-            texts.append(value["text"])
-        if isinstance(value.get("texts"), list):
-            texts.extend(t for t in value["texts"] if isinstance(t, str))
-        for key in ("result", "results"):
-            if key in value:
-                texts.extend(_extract_texts(value[key]))
-        return texts
-    return texts
+def _normalize_text(text: str) -> str:
+    return text.replace("\r\n", "\n").replace("\r", "\n").strip()
 
 
-def _documents_from_json(payload, source: Path):
-    docs = []
-    if isinstance(payload, dict) and isinstance(payload.get("results"), list):
-        for page in payload["results"]:
-            page_texts = _extract_texts(page)
-            if page_texts:
-                text = "\n".join(page_texts)
-            else:
-                text = json.dumps(page, ensure_ascii=False)
-            docs.append(
-                Document(
-                    page_content=text,
-                    metadata={"source": str(source), "page": page.get("page")},
-                )
-            )
-        if docs:
-            return docs
-
-    page_texts = _extract_texts(payload)
-    text = "\n".join(page_texts) if page_texts else json.dumps(payload, ensure_ascii=False)
-    return [Document(page_content=text, metadata={"source": str(source)})]
+def _join_pages(pages: list[str]) -> str:
+    chunks = []
+    for idx, page_text in enumerate(pages, start=1):
+        chunks.append(f"=== Page {idx} ===")
+        chunks.append(page_text.strip())
+    return "\n\n".join(chunks).strip()
 
 
-def load_documents(data_dir: Path):
-    paths = sorted(
-        list(data_dir.glob("*.txt"))
-        + list(data_dir.glob("*.json"))
-    )
-    if not paths:
-        raise SystemExit(
-            "No .txt or .json files found in ppocr_results/. Add some and retry."
-        )
-
-    docs = []
-    for path in paths:
-        if path.suffix.lower() == ".txt":
-            loader = TextLoader(str(path), encoding="utf-8")
-            docs.extend(loader.load())
+def _split_pages(text: str, use_page_markers: bool = False) -> list[str]:
+    if not use_page_markers or "=== Page " not in text:
+        return [text.strip()] if text.strip() else []
+    parts = []
+    for block in text.split("=== Page "):
+        block = block.strip()
+        if not block:
             continue
-        if path.suffix.lower() == ".json":
-            try:
-                raw = path.read_text(encoding="utf-8", errors="replace")
-                payload = json.loads(raw)
-            except json.JSONDecodeError:
-                docs.append(
-                    Document(page_content=raw, metadata={"source": str(path)})
-                )
-                continue
-            docs.extend(_documents_from_json(payload, path))
+        _, _, content = block.partition("===")
+        parts.append(content.strip())
+    return parts
+
+
+def _write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def _read_text_with_fallback(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        try:
+            return path.read_text(encoding="gb18030")
+        except UnicodeDecodeError:
+            return path.read_text(encoding="utf-8", errors="replace")
+
+
+def _build_metadata(path: Path, page: int | None = None) -> dict:
+    metadata = {
+        "source": str(path),
+        "source_type": path.suffix.lower().lstrip("."),
+    }
+    if page is not None:
+        metadata["page"] = page
+    return metadata
+
+
+def _docs_from_text(
+    path: Path,
+    text: str,
+    use_page_markers: bool = False,
+    force_page: bool = False,
+) -> list[Document]:
+    text = _normalize_text(text)
+    if not text:
+        return []
+    pages = _split_pages(text, use_page_markers=use_page_markers)
+    docs: list[Document] = []
+    use_page = force_page or (use_page_markers and len(pages) > 1)
+    for idx, page_text in enumerate(pages, start=1):
+        page_text = page_text.strip()
+        if not page_text:
+            continue
+        metadata = _build_metadata(path, page=idx if use_page else None)
+        docs.append(Document(page_content=page_text, metadata=metadata))
     return docs
 
 
-def collection_exists(client: QdrantClient, name: str) -> bool:
+def _extract_docx_text(path: Path) -> str:
+    from docx import Document as DocxDocument
+
+    doc = DocxDocument(str(path))
+    parts = [p.text for p in doc.paragraphs if p.text.strip()]
+    for table in doc.tables:
+        for row in table.rows:
+            cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+            if cells:
+                parts.append("\t".join(cells))
+    return _normalize_text("\n".join(parts))
+
+
+def _extract_excel_text(path: Path) -> str:
+    import pandas as pd
+
+    sheets = pd.read_excel(path, sheet_name=None, dtype=str)
+    parts = []
+    for name, df in sheets.items():
+        df = df.fillna("")
+        parts.append(f"[Sheet: {name}]")
+        parts.append(df.to_csv(sep="\t", index=False))
+    return _normalize_text("\n".join(parts))
+
+
+def _extract_doc_with_textract(path: Path) -> str | None:
     try:
-        client.get_collection(name)
-        return True
+        import textract  # type: ignore
+    except ImportError:
+        return None
+    raw = textract.process(str(path))
+    if not raw:
+        return ""
+    return raw.decode("utf-8", errors="replace")
+
+
+def _extract_doc_with_word(path: Path) -> str | None:
+    if os.name != "nt":
+        return None
+    try:
+        import win32com.client as win32  # type: ignore
+    except ImportError:
+        return None
+    word = None
+    doc = None
+    try:
+        word = win32.Dispatch("Word.Application")
+        word.Visible = False
+        word.DisplayAlerts = 0
+        doc = word.Documents.Open(str(path), ReadOnly=True)
+        return doc.Content.Text
+    except Exception:
+        return None
+    finally:
+        if doc is not None:
+            doc.Close(False)
+        if word is not None:
+            word.Quit()
+
+
+def _extract_doc_with_soffice(path: Path) -> str | None:
+    soffice = shutil.which("soffice") or shutil.which("libreoffice")
+    if not soffice:
+        return None
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cmd = [
+            soffice,
+            "--headless",
+            "--convert-to",
+            "txt:Text",
+            "--outdir",
+            tmpdir,
+            str(path),
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            return None
+        txt_path = Path(tmpdir) / f"{path.stem}.txt"
+        if not txt_path.exists():
+            candidates = list(Path(tmpdir).glob("*.txt"))
+            if not candidates:
+                return None
+            txt_path = candidates[0]
+        return _read_text_with_fallback(txt_path)
+
+
+def _extract_doc_text(path: Path) -> str:
+    for extractor in (
+        _extract_doc_with_textract,
+        _extract_doc_with_word,
+        _extract_doc_with_soffice,
+    ):
+        text = extractor(path)
+        if text is not None:
+            return _normalize_text(text)
+    raise RuntimeError(
+        "Missing .doc extractor. Install textract/pywin32 or LibreOffice for .doc files."
+    )
+
+
+class _LazyOCR:
+    def __init__(self, **kwargs) -> None:
+        self._kwargs = kwargs
+        self._ocr: LocalPPOCRTool | None = None
+
+    def get(self) -> LocalPPOCRTool:
+        if self._ocr is None:
+            self._ocr = LocalPPOCRTool(**self._kwargs)
+        return self._ocr
+
+
+def _extract_text_from_file(
+    path: Path,
+    ocr: _LazyOCR,
+    image_dpi: int = 200,
+) -> tuple[list[Document], str]:
+    suffix = path.suffix.lower()
+    if suffix == ".txt":
+        text = _normalize_text(_read_text_with_fallback(path))
+        return _docs_from_text(path, text), text
+    if suffix == ".pdf":
+        pages = LocalPPOCRTool._extract_pdf_text(path)
+        if pages is None:
+            pages = ocr.get().ocr_pdf(path, image_dpi=image_dpi)
+        text = _join_pages(pages)
+        return _docs_from_text(path, text, use_page_markers=True, force_page=True), text
+    if suffix == ".docx":
+        text = _extract_docx_text(path)
+        return _docs_from_text(path, text), text
+    if suffix in (".xls", ".xlsx"):
+        text = _extract_excel_text(path)
+        return _docs_from_text(path, text), text
+    if suffix == ".csv":
+        text = _normalize_text(_read_text_with_fallback(path))
+        return _docs_from_text(path, text), text
+    if suffix in (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"):
+        lines = ocr.get().ocr_image_path(path)
+        text = _normalize_text("\n".join(lines))
+        return _docs_from_text(path, text), text
+    if suffix == ".doc":
+        text = _extract_doc_text(path)
+        return _docs_from_text(path, text), text
+    raise ValueError(f"Unsupported file type: {path}")
+
+
+def _load_cached_text(source_path: Path, processed_path: Path) -> str | None:
+    if not processed_path.exists():
+        return None
+    try:
+        if processed_path.stat().st_mtime_ns >= source_path.stat().st_mtime_ns:
+            return _normalize_text(
+                processed_path.read_text(encoding="utf-8", errors="replace")
+            )
+    except OSError:
+        return None
+    return None
+
+
+def process_sources(
+    source_dir: Path,
+    processed_dir: Path,
+    ocr: _LazyOCR,
+    image_dpi: int = 200,
+) -> list[Document]:
+    source_dir = Path(source_dir)
+    processed_dir = Path(processed_dir)
+    if not source_dir.exists():
+        raise SystemExit(f"Source directory not found: {source_dir}")
+
+    docs: list[Document] = []
+    for path in sorted(source_dir.rglob("*")):
+        if not path.is_file():
+            continue
+
+        rel = path.relative_to(source_dir)
+        out_path = (processed_dir / rel).with_suffix(".txt")
+
+        cached_text = _load_cached_text(path, out_path)
+        if cached_text:
+            cached_docs = _docs_from_text(
+                path,
+                cached_text,
+                use_page_markers=path.suffix.lower() == ".pdf",
+                force_page=path.suffix.lower() == ".pdf",
+            )
+            docs.extend(cached_docs)
+            continue
+
+        try:
+            extracted_docs, text = _extract_text_from_file(
+                path, ocr, image_dpi=image_dpi
+            )
+        except ValueError:
+            logger.info("Skipping unsupported file: %s", path)
+            continue
+        except Exception as exc:
+            logger.warning("Skipping %s: %s", path, exc)
+            continue
+
+        if text:
+            _write_text(out_path, text)
+        if extracted_docs:
+            docs.extend(extracted_docs)
+
+    if not docs:
+        raise SystemExit("No supported files found in data/source.")
+    return docs
+
+
+def _fingerprint_processed(processed_dir: Path) -> str:
+    if not processed_dir.exists():
+        return ""
+    items = []
+    for path in sorted(processed_dir.rglob("*.txt")):
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        rel = path.relative_to(processed_dir).as_posix()
+        items.append(f"{rel}:{stat.st_mtime_ns}:{stat.st_size}")
+    if not items:
+        return ""
+    payload = "\n".join(items).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _build_index_manifest(
+    processed_dir: Path,
+    embedding_model: str,
+    chunk_size: int,
+    chunk_overlap: int,
+) -> dict:
+    return {
+        "fingerprint": _fingerprint_processed(processed_dir),
+        "embedding_model": embedding_model,
+        "chunk_size": chunk_size,
+        "chunk_overlap": chunk_overlap,
+    }
+
+
+def _manifest_matches(stored: dict, expected: dict) -> bool:
+    if not stored:
+        return False
+    for key, value in expected.items():
+        if stored.get(key) != value:
+            return False
+    return True
+
+
+def _save_manifest(persist_dir: Path, manifest: dict, doc_count: int) -> None:
+    persist_dir.mkdir(parents=True, exist_ok=True)
+    manifest_payload = dict(manifest)
+    manifest_payload["doc_count"] = doc_count
+    (persist_dir / "manifest.json").write_text(
+        json.dumps(manifest_payload, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def _load_manifest(persist_dir: Path) -> dict:
+    manifest_path = persist_dir / "manifest.json"
+    if not manifest_path.exists():
+        return {}
+    try:
+        return json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+
+
+def _qdrant_location(persist_dir: Path) -> str:
+    url = os.getenv("QDRANT_URL")
+    if url:
+        return url
+    return os.getenv("QDRANT_PATH", str(persist_dir / "qdrant"))
+
+
+def _get_qdrant_client(persist_dir: Path) -> QdrantClient:
+    url = os.getenv("QDRANT_URL")
+    api_key = os.getenv("QDRANT_API_KEY")
+    if url:
+        return QdrantClient(url=url, api_key=api_key)
+    path = _qdrant_location(persist_dir)
+    return QdrantClient(path=path)
+
+
+def _collection_exists(client: QdrantClient, name: str) -> bool:
+    try:
+        client.get_collection(collection_name=name)
     except Exception:
         return False
+    return True
 
 
-def get_vectorstore(docs, persist_dir: Path):
-    embeddings = GoogleGenerativeAIEmbeddings(model="text-embedding-004")
-    client = QdrantClient(path=str(persist_dir))
-    collection_name = "rag_demo"
+def _recreate_collection(client: QdrantClient, name: str, vector_size: int) -> None:
+    try:
+        client.delete_collection(collection_name=name)
+    except Exception:
+        pass
+    client.create_collection(
+        collection_name=name,
+        vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE),
+    )
 
-    if collection_exists(client, collection_name):
-        return Qdrant(
-            client=client,
+
+def _upsert_documents(
+    client: QdrantClient,
+    collection_name: str,
+    docs: list[Document],
+    vectors: list[list[float]],
+    batch_size: int = 64,
+) -> None:
+    total = len(docs)
+    for start in range(0, total, batch_size):
+        points: list[PointStruct] = []
+        for idx in range(start, min(start + batch_size, total)):
+            payload = {
+                "page_content": docs[idx].page_content,
+                "metadata": docs[idx].metadata,
+            }
+            points.append(
+                PointStruct(id=idx, vector=vectors[idx], payload=payload)
+            )
+        if points:
+            client.upsert(collection_name=collection_name, points=points, wait=True)
+
+
+def _search_qdrant(
+    client: QdrantClient,
+    collection_name: str,
+    query_vector: list[float],
+    limit: int,
+):
+    if hasattr(client, "search"):
+        return client.search(
             collection_name=collection_name,
-            embeddings=embeddings,
+            query_vector=query_vector,
+            limit=limit,
+            with_payload=True,
         )
+    if hasattr(client, "query_points"):
+        response = client.query_points(
+            collection_name=collection_name,
+            query=query_vector,
+            limit=limit,
+            with_payload=True,
+        )
+        return getattr(response, "points", response)
+    raise RuntimeError("Unsupported Qdrant client: missing search/query_points.")
+
+
+def _docs_from_search_results(results) -> tuple[list[Document], np.ndarray]:
+    docs: list[Document] = []
+    scores: list[float] = []
+    for point in results:
+        payload = point.payload or {}
+        content = payload.get("page_content") or ""
+        metadata = payload.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        docs.append(Document(page_content=content, metadata=metadata))
+        scores.append(float(point.score or 0.0))
+    return docs, np.array(scores, dtype=np.float32)
+
+
+def _normalize_scores(scores: np.ndarray) -> np.ndarray:
+    if scores.size == 0:
+        return scores
+    min_score = float(np.min(scores))
+    max_score = float(np.max(scores))
+    if max_score == min_score:
+        return np.zeros_like(scores)
+    return (scores - min_score) / (max_score - min_score)
+
+
+def _keyword_scores_for_docs(
+    docs: list[Document],
+    cjk_keywords: list[str],
+    latin_keywords: list[str],
+) -> np.ndarray:
+    scores = np.zeros(len(docs), dtype=np.float32)
+    for idx, doc in enumerate(docs):
+        scores[idx] = _keyword_score(doc.page_content, cjk_keywords, latin_keywords)
+    return scores
+
+
+def _hybrid_rerank(
+    query: str,
+    docs: list[Document],
+    vector_scores: np.ndarray,
+    k: int,
+    alpha: float,
+) -> list[Document]:
+    if vector_scores.size == 0 or not docs:
+        return []
+    cjk, latin = _query_terms(query)
+    keyword_scores = _keyword_scores_for_docs(docs, cjk, latin)
+
+    if keyword_scores.size > 0 and float(keyword_scores.max()) > 0:
+        combined = _normalize_scores(vector_scores) * alpha + _normalize_scores(
+            keyword_scores
+        ) * (1 - alpha)
+        order = np.argsort(combined)[::-1][:k]
+    else:
+        order = np.argsort(vector_scores)[::-1][:k]
+
+    return [docs[idx] for idx in order]
+
+
+def retrieve_documents(
+    query: str,
+    client: QdrantClient,
+    collection_name: str,
+    raw_docs: list[Document],
+    embedder: GoogleGenerativeAIEmbeddings,
+    k: int = 6,
+    fetch_k: int = 24,
+    alpha: float = 0.7,
+) -> tuple[list[Document], str]:
+    fetch_k = max(fetch_k, k)
+    query_vec = embedder.embed_query(query)
+    results = _search_qdrant(client, collection_name, query_vec, limit=fetch_k)
+    docs, vector_scores = _docs_from_search_results(results)
+    docs = _hybrid_rerank(query, docs, vector_scores, k=k, alpha=alpha)
+    if not docs:
+        fallback = _keyword_fallback(raw_docs, query, limit=min(3, k))
+        return (fallback, "keyword_fallback") if fallback else ([], "none")
+
+    if not _docs_have_keyword_hits(docs, query):
+        fallback = _keyword_fallback(raw_docs, query, limit=min(3, k))
+        if fallback:
+            return fallback, "keyword_fallback"
+
+    return docs, "hybrid"
+
+
+def _format_source(doc: Document) -> str:
+    source = doc.metadata.get("source") or "unknown"
+    name = Path(source).name
+    page = doc.metadata.get("page")
+    if page is not None:
+        return f"{name}#p{page}"
+    return name
+
+
+def _format_context(docs: list[Document]) -> str:
+    blocks = []
+    for doc in docs:
+        label = _format_source(doc)
+        blocks.append(f"[{label}]\n{doc.page_content}")
+    return "\n\n".join(blocks)
+
+
+def _unique_sources(docs: list[Document]) -> list[str]:
+    seen = set()
+    sources: list[str] = []
+    for doc in docs:
+        label = _format_source(doc)
+        if label not in seen:
+            seen.add(label)
+            sources.append(label)
+    return sources
+
+
+def _response_text(content) -> str:
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "\n".join(part for part in parts if part).strip()
+    return str(content)
+
+
+def get_vectorstore(
+    docs: list[Document],
+    persist_dir: Path,
+    processed_dir: Path,
+    force_rebuild: bool = False,
+):
+    embedding_model = os.getenv("GOOGLE_EMBEDDING_MODEL", "text-embedding-004")
+    chunk_size = int(os.getenv("RAG_CHUNK_SIZE", "800"))
+    chunk_overlap = int(os.getenv("RAG_CHUNK_OVERLAP", "100"))
+    collection_name = os.getenv("QDRANT_COLLECTION", "rag_docs")
+    qdrant_location = _qdrant_location(persist_dir)
+
+    embeddings = GoogleGenerativeAIEmbeddings(model=embedding_model)
+    manifest = _build_index_manifest(
+        processed_dir, embedding_model, chunk_size, chunk_overlap
+    )
+    manifest["collection_name"] = collection_name
+    manifest["qdrant_location"] = qdrant_location
+
+    client = _get_qdrant_client(persist_dir)
+
+    if not force_rebuild:
+        stored_manifest = _load_manifest(persist_dir)
+        if _manifest_matches(stored_manifest, manifest) and _collection_exists(
+            client, collection_name
+        ):
+            return client, collection_name, embeddings
 
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=800,
-        chunk_overlap=100,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
     )
     splits = splitter.split_documents(docs)
     if not splits:
         raise SystemExit("No content left after splitting documents.")
 
-    vector_size = len(embeddings.embed_documents([splits[0].page_content])[0])
-    from qdrant_client.http import models as rest
+    vectors = embeddings.embed_documents([doc.page_content for doc in splits])
+    if not vectors:
+        raise SystemExit("Embedding model returned no vectors.")
+    vector_size = len(vectors[0])
+    _recreate_collection(client, collection_name, vector_size)
+    _upsert_documents(client, collection_name, splits, vectors)
+    _save_manifest(persist_dir, manifest, doc_count=len(splits))
+    return client, collection_name, embeddings
 
-    client.create_collection(
-        collection_name=collection_name,
-        vectors_config=rest.VectorParams(
-            size=vector_size,
-            distance=rest.Distance.COSINE,
-        ),
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="RAG demo")
+    parser.add_argument("question", nargs="?", help="Question to ask.")
+    parser.add_argument("--k", type=int, default=6, help="Top-k chunks to return.")
+    parser.add_argument(
+        "--fetch-k",
+        type=int,
+        default=24,
+        help="Candidate pool size for hybrid retrieval.",
     )
-    vectorstore = Qdrant(
-        client=client,
-        collection_name=collection_name,
-        embeddings=embeddings,
+    parser.add_argument(
+        "--image-dpi", type=int, default=200, help="DPI for OCR PDF rendering."
     )
-    vectorstore.add_documents(splits)
-    return vectorstore
+    parser.add_argument(
+        "--rebuild",
+        action="store_true",
+        help="Rebuild vector index even if cached.",
+    )
+    return parser.parse_args()
 
 
 def main() -> None:
     load_dotenv()
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    args = _parse_args()
 
     root = Path(__file__).resolve().parents[1]
-    data_dir = root / "ppocr_results"
-    persist_dir = root / "qdrant"
+    source_dir = root / "data" / "source"
+    processed_dir = root / "data" / "processed"
+    persist_dir = root / "index"
 
-    raw_docs = load_documents(data_dir)
-    vectorstore = get_vectorstore(raw_docs, persist_dir)
-
-    retriever = vectorstore.as_retriever(
-        search_type="mmr",
-        search_kwargs={"k": 6, "fetch_k": 20},
+    ocr_tool = _LazyOCR()
+    raw_docs = process_sources(
+        source_dir, processed_dir, ocr_tool, image_dpi=args.image_dpi
     )
+    client, collection_name, embedder = get_vectorstore(
+        raw_docs, persist_dir, processed_dir, force_rebuild=args.rebuild
+    )
+
     model = os.getenv("GOOGLE_MODEL", "gemini-1.5-flash")
     llm = ChatGoogleGenerativeAI(model=model, temperature=0)
 
-    question = "如果要暂停工作，有哪几种情形."
-    docs = retriever.invoke(question)
-    if not _docs_have_keyword_hits(docs, question):
-        fallback_docs = _keyword_fallback(raw_docs, question, limit=3)
-        if fallback_docs:
-            docs = fallback_docs
-    context = "\n\n".join(doc.page_content for doc in docs)
+    question = args.question or os.getenv("QUESTION") or "如果要暂停工作，有哪几种情形."
+    question = question.strip()
+    if not question:
+        question = "如果要暂停工作，有哪几种情形."
+
+    alpha = float(os.getenv("RAG_ALPHA", "0.7"))
+    docs, strategy = retrieve_documents(
+        question,
+        client,
+        collection_name,
+        raw_docs,
+        embedder,
+        k=args.k,
+        fetch_k=args.fetch_k,
+        alpha=alpha,
+    )
+
+    if not docs:
+        print("No relevant documents found.")
+        return
+
+    context = _format_context(docs)
     prompt = (
-        "Use the following context to answer the question.\n\n"
-        f"Context:\n{context}\n\n"
-        f"Question: {question}\n"
-        "Answer:"
+        "Use the following context to answer the question. "
+        "If the answer is not in the context, say you do not know.\n\n"
+        f"{context}\n\nQuestion: {question}\nAnswer:"
     )
     response = llm.invoke(prompt)
 
-    print("Answer:\n", (response.content or "").strip())
+    print("Answer:\n", _response_text(response.content))
+    print(f"\nRetrieval: {strategy}")
     print("\nSources:")
-    for doc in docs:
-        print("-", doc.metadata.get("source", "unknown"))
+    for source in _unique_sources(docs):
+        print("-", source)
 
 
 if __name__ == "__main__":
