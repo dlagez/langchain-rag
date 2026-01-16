@@ -1,0 +1,6 @@
+langchain==1.2.4
+langchain-community==0.4.1
+langchain-google-genai==4.2.0
+langchain-text-splitters==1.1.0
+qdrant-client==1.11.2
+python-dotenv==1.2.1
