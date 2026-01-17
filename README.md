@@ -58,12 +58,14 @@ Optional:
 - `PPOCR_TIMEOUT`: request timeout seconds (default: `20`).
 - `PPOCR_FILE_FIELD`: multipart file field name (default: `file`).
 - `PPOCR_IMAGE_PATH`: default image path for PPOCR API tests/requests.
+- `PPOCR_MODE`: OCR backend (`local`/`remote`/`auto`, default: `local`).
 
 Copy-ready example:
 ```bash
 GOOGLE_API_KEY=your_key_here
 GOOGLE_MODEL=gemini-2.5-flash
-GOOGLE_EMBEDDING_MODEL=text-embedding-004
+PPOCR_TIMEOUT=60
+
 RAG_CHUNK_SIZE=800
 RAG_CHUNK_OVERLAP=100
 RAG_ALPHA=0.7
@@ -73,7 +75,6 @@ PPOCR_USE_GPU=0
 PPOCR_BASE_URL=http://10.0.22.109:8001
 PPOCR_ENDPOINT=/ocr
 PPOCR_REQUEST_FORMAT=auto
-PPOCR_TIMEOUT=20
 PPOCR_FILE_FIELD=file
 # PPOCR_URL=http://10.0.22.109:8001/ocr
 # PPOCR_IMAGE_PATH=data/source/sample.png

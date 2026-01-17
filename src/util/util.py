@@ -16,7 +16,7 @@ from langchain_core.documents import Document
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, PointStruct, VectorParams
 
-from ppocr_pdf_tool import LocalPPOCRTool
+from ppocr_pdf_tool import LocalPPOCRTool, RemotePPOCRTool
 
 _CJK_RE = re.compile(r"[\u4e00-\u9fff]+")
 _WORD_RE = re.compile(r"[A-Za-z0-9]+")
@@ -306,11 +306,20 @@ def _extract_doc_text(path: Path) -> str:
 class _LazyOCR:
     def __init__(self, **kwargs) -> None:
         self._kwargs = kwargs
-        self._ocr: LocalPPOCRTool | None = None
+        self._ocr: LocalPPOCRTool | RemotePPOCRTool | None = None
 
-    def get(self) -> LocalPPOCRTool:
+    def get(self) -> LocalPPOCRTool | RemotePPOCRTool:
         if self._ocr is None:
-            self._ocr = LocalPPOCRTool(**self._kwargs)
+            mode = os.getenv("PPOCR_MODE", "local").strip().lower()
+            if mode in ("remote", "http"):
+                self._ocr = RemotePPOCRTool()
+            elif mode == "auto":
+                try:
+                    self._ocr = LocalPPOCRTool(**self._kwargs)
+                except SystemExit:
+                    self._ocr = RemotePPOCRTool()
+            else:
+                self._ocr = LocalPPOCRTool(**self._kwargs)
         return self._ocr
 
 

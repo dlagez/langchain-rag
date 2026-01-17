@@ -1,3 +1,0 @@
-LangChain is a framework for building applications with LLMs.
-RAG (Retrieval-Augmented Generation) combines retrieval with generation.
-Vector stores like Chroma help index and search document embeddings.

@@ -160,7 +160,7 @@ def main() -> None:
     model = os.getenv("GOOGLE_MODEL", "gemini-2.5-flash")
     llm = ChatGoogleGenerativeAI(model=model, temperature=0)
 
-    question = args.question or os.getenv("QUESTION") or "投标人基本情况是什么，联系人是谁，联系方式是什么？"
+    question = args.question or os.getenv("QUESTION") or "施工合同审批表项目计税类型是什么？合同里面的项目计税类型是什么？"
     question = question.strip()
     if not question:
         return

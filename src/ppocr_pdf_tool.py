@@ -393,3 +393,77 @@ class LocalPPOCRTool:
         if any(page for page in pages):
             return pages
         return None
+
+
+class RemotePPOCRTool:
+    def __init__(self) -> None:
+        pass
+
+    def ocr_image_bytes(self, image_bytes: bytes) -> list[str]:
+        payload = LocalPPOCRTool.ocr_image_bytes_remote(image_bytes=image_bytes)
+        return self._extract_remote_texts(payload)
+
+    def ocr_image_path(self, image_path: Path) -> list[str]:
+        image_path = Path(image_path)
+        if not image_path.exists():
+            raise FileNotFoundError(f"Image not found: {image_path}")
+        payload = LocalPPOCRTool.ocr_image_bytes_remote(image_path=image_path)
+        return self._extract_remote_texts(payload)
+
+    def ocr_pdf(self, pdf_path: Path, image_dpi: int = 200) -> list[str]:
+        pdf_path = Path(pdf_path)
+        if not pdf_path.exists():
+            raise FileNotFoundError(f"PDF not found: {pdf_path}")
+
+        text_pages = LocalPPOCRTool._extract_pdf_text(pdf_path)
+        if text_pages is not None:
+            return text_pages
+
+        tool = PdfImageTool(image_dpi=image_dpi)
+        page_texts: list[str] = []
+        for _, image_bytes, _ in tool.iter_pdf_images(pdf_path):
+            lines = self.ocr_image_bytes(image_bytes)
+            page_texts.append("\n".join(lines))
+        return page_texts
+
+    @classmethod
+    def _extract_remote_texts(cls, payload) -> list[str]:
+        if payload is None:
+            return []
+        if isinstance(payload, list):
+            if payload and all(isinstance(item, dict) for item in payload):
+                texts: list[str] = []
+                for item in payload:
+                    value = item.get("text") or item.get("word")
+                    if isinstance(value, str):
+                        texts.append(value)
+                if texts:
+                    return texts
+            if payload and all(isinstance(item, str) for item in payload):
+                return [item for item in payload if item]
+            return LocalPPOCRTool._extract_texts(payload)
+        if isinstance(payload, dict):
+            for key in ("result", "results", "data", "ocr_result"):
+                if key in payload:
+                    return cls._extract_remote_texts(payload[key])
+            text = payload.get("text")
+            if isinstance(text, str):
+                return [text]
+            texts = payload.get("texts")
+            if isinstance(texts, list):
+                return [item for item in texts if isinstance(item, str)]
+            lines = payload.get("lines") or payload.get("words")
+            if isinstance(lines, list):
+                extracted: list[str] = []
+                for item in lines:
+                    if isinstance(item, str):
+                        extracted.append(item)
+                    elif isinstance(item, dict):
+                        value = item.get("text") or item.get("word")
+                        if isinstance(value, str):
+                            extracted.append(value)
+                    elif LocalPPOCRTool._is_line_item(item):
+                        extracted.append(item[1][0])
+                if extracted:
+                    return extracted
+        return []
