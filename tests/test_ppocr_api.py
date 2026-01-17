@@ -11,6 +11,10 @@ from urllib import error, request
 
 from dotenv import load_dotenv
 
+try:
+    import paddle  # type: ignore
+except Exception:
+    paddle = None
 
 _DEFAULT_PNG_BASE64 = (
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMA"
@@ -192,6 +196,34 @@ class TestPPOCRApi(unittest.TestCase):
         self.fail(f"PPOCR request failed. url={self.url}\n{error_details}")
 
 
+@unittest.skipUnless(paddle is not None, "paddle is not installed")
+class TestPPOCRGpuAvailability(unittest.TestCase):
+    def test_paddle_cuda_available(self) -> None:
+        if not paddle.is_compiled_with_cuda():
+            self.fail(
+                "Paddle is not compiled with CUDA. Install paddlepaddle-gpu."
+            )
+        try:
+            from paddle.device import cuda  # type: ignore
+        except Exception as exc:
+            self.fail(f"Failed to import paddle.device.cuda: {exc!r}")
+        device_count = cuda.device_count()
+        self.assertGreater(
+            device_count,
+            0,
+            "No CUDA devices detected. Check driver/CUDA visibility.",
+        )
+
+    def test_ppocr_init_with_gpu(self) -> None:
+        try:
+            from paddleocr import PaddleOCR  # type: ignore
+        except Exception as exc:
+            self.skipTest(f"paddleocr not installed: {exc!r}")
+        ocr = PaddleOCR(use_gpu=True, show_log=False)
+        self.assertIsNotNone(ocr)
+
+
+# test gpu avilibale
 if __name__ == "__main__":
     remaining_args = _apply_cli_env_overrides()
     unittest.main(argv=[sys.argv[0]] + remaining_args)

@@ -298,8 +298,8 @@ _KEYWORD_HINTS = (
     "\u589e\u503c\u7a0e\u666e\u901a\u53d1\u7968",
 )
 
-_FORM_PREFIX = "\u8868\u5355-"
-_ATTACHMENT_PREFIX = "\u9644\u4ef6-"
+_FORM_PREFIX = "\u8868\u5355"
+_ATTACHMENT_PREFIX = "\u9644\u4ef6"
 _FORM_FIELD_MAX_LEN = 28
 _FORM_FIELD_HINTS = (
     "\u7f16\u53f7",
@@ -447,26 +447,26 @@ def _infer_source_scope(prompt: str, source_names: list[str]) -> SourceScope:
     prefix: str | None = None
 
     if "\u8868\u5355" in prompt or "\u5ba1\u6279\u8868" in prompt:
-        prefix = "\u8868\u5355-"
+        prefix = "\u8868\u5355"
 
     if any(term in prompt for term in ("\u9644\u4ef6", "\u5408\u540c", "\u62db\u6807\u6587\u4ef6", "\u901a\u77e5\u4e66", "\u534f\u8bae")):
         if prefix is None:
-            prefix = "\u9644\u4ef6-"
+            prefix = "\u9644\u4ef6"
 
     if "\u62db\u6807\u6587\u4ef6" in prompt:
-        prefix = "\u9644\u4ef6-"
+        prefix = "\u9644\u4ef6"
         include_terms = ["\u62db\u6807\u6587\u4ef6"]
     elif "\u901a\u77e5\u4e66" in prompt:
-        prefix = "\u9644\u4ef6-"
+        prefix = "\u9644\u4ef6"
         include_terms = ["\u901a\u77e5\u4e66"]
     elif "\u534f\u8bae" in prompt and "\u5408\u540c" not in prompt:
-        prefix = "\u9644\u4ef6-"
+        prefix = "\u9644\u4ef6"
         include_terms = ["\u534f\u8bae"]
     elif "\u9644\u4ef6" in prompt and "\u5408\u540c" in prompt:
-        prefix = "\u9644\u4ef6-"
+        prefix = "\u9644\u4ef6"
         include_terms = ["\u5408\u540c"]
         exclude_terms = ["\u62db\u6807\u6587\u4ef6"]
-    elif "\u5408\u540c" in prompt and prefix == "\u9644\u4ef6-":
+    elif "\u5408\u540c" in prompt and prefix == "\u9644\u4ef6":
         include_terms = ["\u5408\u540c"]
         exclude_terms = ["\u62db\u6807\u6587\u4ef6"]
 
