@@ -18,7 +18,7 @@ from qdrant_client.http.models import Distance, PointStruct, VectorParams
 
 from ppocr_pdf_tool import LocalPPOCRTool, RemotePPOCRTool
 
-_CJK_RE = re.compile(r"[\u4e00-\u9fff]+")
+_CJK_RE = re.compile(r"[一-鿿]+")
 _WORD_RE = re.compile(r"[A-Za-z0-9]+")
 _ATTACHMENT_RE = re.compile(r"附件\s*([0-9]+)")
 _ATTACHMENT_CN_RE = re.compile(r"附件\s*([一二三四五六七八九十])")

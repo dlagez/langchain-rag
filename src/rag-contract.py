@@ -125,9 +125,9 @@ def _unique_sources_with_retriever(docs: list[Document]) -> list[str]:
 
 
 _KEYWORD_PUNCTUATION = (
-    " ,.;:?!\u3001\u3002\uFF0C\uFF1B\uFF1A\uFF1F\uFF01"
+    " ,.;:?!、。，；：？！"
 )
-_PERCENT_RE = re.compile(r"^\d{1,2}[%\uFF05]$")
+_PERCENT_RE = re.compile(r"^\d{1,2}[%％]$")
 
 
 def _regex_keywords_from_query(keyword_query: str) -> list[str]:
@@ -138,10 +138,10 @@ def _regex_keywords_from_query(keyword_query: str) -> list[str]:
         token = raw.strip(_KEYWORD_PUNCTUATION)
         if not token:
             continue
-        if "?" in raw or "\uFF1F" in raw:
+        if "?" in raw or "？" in raw:
             if len(token) > 8:
                 continue
-            token = token.replace("?", "").replace("\uFF1F", "")
+            token = token.replace("?", "").replace("？", "")
         if len(token) < 2 and not re.search(r"\d", token):
             continue
         tokens.append(token)
@@ -154,7 +154,7 @@ def _regex_keyword_patterns(tokens: list[str]) -> list[str]:
         if _PERCENT_RE.fullmatch(token):
             number = re.search(r"\d{1,2}", token)
             if number:
-                patterns.append(f"{number.group(0)}\\s*[%\uFF05]")
+                patterns.append(f"{number.group(0)}\\s*[%％]")
             continue
         patterns.append(re.escape(token))
     return patterns
@@ -282,53 +282,53 @@ def retrieve_documents(
     return docs, "hybrid"
 
 
-_QUESTION_WORDS = ("\u4ec0\u4e48", "\u591a\u5c11", "\u51e0", "\u5982\u4f55", "\u662f\u5426", "\u54ea\u91cc", "\u54ea", "\u8c01")
-_DOMAIN_HINTS = ("\u589e\u503c\u7a0e", "\u7a0e\u7387", "\u8ba1\u7a0e", "\u5f81\u6536\u7387", "\u53d1\u7968", "\u9879\u76ee\u8ba1\u7a0e\u7c7b\u578b")
-_RULE_MARKERS = ("\u89c4\u5219", "\u4e0d\u5f97", "\u4ec5", "\u82e5", "\u5426\u5219", "\u8fd4\u56de", "\u8f93\u51fa", "\u8bc6\u522b")
-_IGNORE_LINE_RE = re.compile(r"^\s*(\d+[\.\)]|[-*\u2022])\s*")
-_IGNORE_STARTS = ("\u4f60\u662f", "\u4f60\u7684\u4efb\u52a1", "\u8bf7\u4e25\u683c", "\u6ce8\u610f", "\u8bf4\u660e")
+_QUESTION_WORDS = ("什么", "多少", "几", "如何", "是否", "哪里", "哪", "谁")
+_DOMAIN_HINTS = ("增值税", "税率", "计税", "征收率", "发票", "项目计税类型")
+_RULE_MARKERS = ("规则", "不得", "仅", "若", "否则", "返回", "输出", "识别")
+_IGNORE_LINE_RE = re.compile(r"^\s*(\d+[\.\)]|[-*•])\s*")
+_IGNORE_STARTS = ("你是", "你的任务", "请严格", "注意", "说明")
 _KEYWORD_HINTS = (
-    "\u589e\u503c\u7a0e\u7a0e\u7387",
-    "\u7a0e\u7387",
-    "\u5f81\u6536\u7387",
-    "\u8ba1\u7a0e\u65b9\u6cd5",
-    "\u4e00\u822c\u8ba1\u7a0e",
-    "\u7b80\u6613\u8ba1\u7b97",
-    "\u589e\u503c\u7a0e\u4e13\u7528\u53d1\u7968",
-    "\u589e\u503c\u7a0e\u666e\u901a\u53d1\u7968",
+    "增值税税率",
+    "税率",
+    "征收率",
+    "计税方法",
+    "一般计税",
+    "简易计算",
+    "增值税专用发票",
+    "增值税普通发票",
 )
 
-_FORM_PREFIX = "\u8868\u5355"
-_ATTACHMENT_PREFIX = "\u9644\u4ef6"
+_FORM_PREFIX = "表单"
+_ATTACHMENT_PREFIX = "附件"
 _FORM_FIELD_MAX_LEN = 28
 _FORM_FIELD_HINTS = (
-    "\u7f16\u53f7",
-    "\u6d41\u7a0b",
-    "\u9879\u76ee",
-    "\u5408\u540c",
-    "\u7a0e\u7387",
-    "\u91d1\u989d",
-    "\u7c7b\u578b",
-    "\u610f\u89c1",
-    "\u5907\u6ce8",
+    "编号",
+    "流程",
+    "项目",
+    "合同",
+    "税率",
+    "金额",
+    "类型",
+    "意见",
+    "备注",
 )
 _PROCESS_ID_FIELD_HINTS = (
-    "\u6d41\u7a0b",
-    "\u5b9e\u4f8b",
-    "\u7f16\u53f7",
-    "\u5355\u53f7",
-    "\u8868\u5355\u7f16\u53f7",
+    "流程",
+    "实例",
+    "编号",
+    "单号",
+    "表单编号",
     "process",
     "instance",
     "id",
 )
-_VALUE_HINTS = ("\u4e0b\u8f7d", "\u67e5\u770b")
+_VALUE_HINTS = ("下载", "查看")
 _VALUE_FILE_RE = re.compile(
     r"\.(pdf|docx|doc|xlsx|xls|csv|png|jpg|jpeg|bmp|tif|tiff)\b",
     re.IGNORECASE,
 )
 _VALUE_NUMERIC_RE = re.compile(
-    r"^[\d\s,\.\-/%()\uFF05\uFF08\uFF09]+$"
+    r"^[\d\s,\.\-/%()％（）]+$"
 )
 
 
@@ -348,7 +348,7 @@ def _is_rule_like(line: str) -> bool:
         return True
     if any(line.startswith(prefix) for prefix in _IGNORE_STARTS):
         return True
-    if any(marker in line for marker in _RULE_MARKERS) and not line.endswith(("?", "\uFF1F")):
+    if any(marker in line for marker in _RULE_MARKERS) and not line.endswith(("?", "？")):
         return True
     return False
 
@@ -362,7 +362,7 @@ def _build_retrieval_query(prompt: str) -> str:
     for line in lines:
         if _is_rule_like(line):
             continue
-        if line.endswith(("?", "\uFF1F")) or any(word in line for word in _QUESTION_WORDS):
+        if line.endswith(("?", "？")) or any(word in line for word in _QUESTION_WORDS):
             candidates.append(line)
             continue
         if any(hint in line for hint in _DOMAIN_HINTS) and len(line) <= 80:
@@ -418,6 +418,124 @@ def _collect_source_names(raw_docs: list[Document]) -> list[str]:
     return sorted(names)
 
 
+_CONTRACT_NAME_STRONG = (
+    "建设工程施工合同",
+    "施工合同",
+    "合同协议书",
+    "合同条款",
+)
+_CONTRACT_NAME_EXCLUDES = (
+    "条款核对",
+    "核对",
+    "对照",
+    "招标文件",
+    "投标文件",
+    "中标通知书",
+    "答疑",
+    "澄清",
+    "控制价",
+    "报告书",
+    "清单",
+    "汇总",
+    "说明",
+    "补遗",
+    "更正",
+    "图纸",
+    "纪要",
+)
+_CONTRACT_TEXT_STRONG = (
+    "发包人",
+    "承包人",
+    "合同价款",
+    "签订地点",
+    "签订日期",
+    "通用合同条款",
+    "专用合同条款",
+    "工程名称",
+    "工期",
+)
+_CONTRACT_TEXT_EXCLUDES = (
+    "投标人",
+    "招标人",
+    "评标委员会",
+    "招标文件",
+    "答疑",
+    "澄清",
+)
+
+
+def _contract_text_sample(docs: list[Document], limit: int = 4000) -> str:
+    if not docs:
+        return ""
+    chunks: list[str] = []
+    total = 0
+    for doc in docs:
+        text = doc.page_content or ""
+        if not text:
+            continue
+        if total + len(text) > limit:
+            remaining = max(0, limit - total)
+            if remaining:
+                chunks.append(text[:remaining])
+            break
+        chunks.append(text)
+        total += len(text)
+        if total >= limit:
+            break
+    return "\n".join(chunks)
+
+
+def _score_contract_candidate(name: str, text: str) -> int:
+    score = 0
+    strong_hit = False
+    for term in _CONTRACT_NAME_STRONG:
+        if term in name:
+            score += 6
+            strong_hit = True
+    if not strong_hit and "合同" in name:
+        score += 2
+    for term in _CONTRACT_NAME_EXCLUDES:
+        if term in name:
+            score -= 8
+    for term in _CONTRACT_TEXT_STRONG:
+        if term in text:
+            score += 2
+    if "发包人" in text and "承包人" in text:
+        score += 4
+    if "合同价款" in text:
+        score += 3
+    for term in _CONTRACT_TEXT_EXCLUDES:
+        if term in text:
+            score -= 3
+    return score
+
+
+def _select_contract_names(raw_docs: list[Document]) -> list[str]:
+    if not raw_docs:
+        return []
+    grouped: dict[str, list[Document]] = {}
+    for doc in raw_docs:
+        metadata = doc.metadata or {}
+        if metadata.get("source_type") != "attachment":
+            continue
+        source = metadata.get("source")
+        if not source:
+            continue
+        name = Path(source).name
+        grouped.setdefault(name, []).append(doc)
+    scored: list[tuple[int, str]] = []
+    for name, docs in grouped.items():
+        text_sample = _contract_text_sample(docs)
+        score = _score_contract_candidate(name, text_sample)
+        if score > 0:
+            scored.append((score, name))
+    if not scored:
+        return []
+    scored.sort(key=lambda item: (-item[0], len(item[1])))
+    max_score = scored[0][0]
+    return [name for score, name in scored if score >= max_score - 2]
+
+
 def _match_source_names(scope: SourceScope, source_names: list[str]) -> list[str]:
     return [name for name in source_names if _doc_in_scope(name, scope)]
 
@@ -437,7 +555,11 @@ def _infer_explicit_sources(prompt: str, source_names: list[str]) -> list[str]:
     return [item for item in matches if len(item) == max_len]
 
 
-def _infer_source_scope(prompt: str, source_names: list[str]) -> SourceScope:
+def _infer_source_scope(
+    prompt: str,
+    source_names: list[str],
+    raw_docs: list[Document] | None = None,
+) -> SourceScope:
     explicit = _infer_explicit_sources(prompt, source_names)
     if explicit:
         return SourceScope(names=tuple(explicit))
@@ -446,29 +568,34 @@ def _infer_source_scope(prompt: str, source_names: list[str]) -> SourceScope:
     exclude_terms: list[str] = []
     prefix: str | None = None
 
-    if "\u8868\u5355" in prompt or "\u5ba1\u6279\u8868" in prompt:
-        prefix = "\u8868\u5355"
+    if "表单" in prompt or "审批表" in prompt:
+        prefix = "表单"
 
-    if any(term in prompt for term in ("\u9644\u4ef6", "\u5408\u540c", "\u62db\u6807\u6587\u4ef6", "\u901a\u77e5\u4e66", "\u534f\u8bae")):
+    if any(term in prompt for term in ("附件", "合同", "招标文件", "通知书", "协议")):
         if prefix is None:
-            prefix = "\u9644\u4ef6"
+            prefix = "附件"
 
-    if "\u62db\u6807\u6587\u4ef6" in prompt:
-        prefix = "\u9644\u4ef6"
-        include_terms = ["\u62db\u6807\u6587\u4ef6"]
-    elif "\u901a\u77e5\u4e66" in prompt:
-        prefix = "\u9644\u4ef6"
-        include_terms = ["\u901a\u77e5\u4e66"]
-    elif "\u534f\u8bae" in prompt and "\u5408\u540c" not in prompt:
-        prefix = "\u9644\u4ef6"
-        include_terms = ["\u534f\u8bae"]
-    elif "\u9644\u4ef6" in prompt and "\u5408\u540c" in prompt:
-        prefix = "\u9644\u4ef6"
-        include_terms = ["\u5408\u540c"]
-        exclude_terms = ["\u62db\u6807\u6587\u4ef6"]
-    elif "\u5408\u540c" in prompt and prefix == "\u9644\u4ef6":
-        include_terms = ["\u5408\u540c"]
-        exclude_terms = ["\u62db\u6807\u6587\u4ef6"]
+    if raw_docs is not None and "合同" in prompt:
+        contract_names = _select_contract_names(raw_docs)
+        if contract_names:
+            return SourceScope(names=tuple(contract_names))
+
+    if "招标文件" in prompt:
+        prefix = "附件"
+        include_terms = ["招标文件"]
+    elif "通知书" in prompt:
+        prefix = "附件"
+        include_terms = ["通知书"]
+    elif "协议" in prompt and "合同" not in prompt:
+        prefix = "附件"
+        include_terms = ["协议"]
+    elif "附件" in prompt and "合同" in prompt:
+        prefix = "附件"
+        include_terms = ["合同"]
+        exclude_terms = ["招标文件"]
+    elif "合同" in prompt and prefix == "附件":
+        include_terms = ["合同"]
+        exclude_terms = ["招标文件"]
 
     hint = _extract_source_hint(prompt)
     if hint and hint not in include_terms:
@@ -568,7 +695,7 @@ def _looks_like_field_name(line: str) -> bool:
 
 
 def _is_strong_field_name(line: str) -> bool:
-    if line.endswith((":", "\uFF1A")):
+    if line.endswith((":", "：")):
         return True
     return any(hint in line for hint in _FORM_FIELD_HINTS)
 
@@ -883,7 +1010,7 @@ def main() -> None:
     retrieval_query = _build_retrieval_query(question)
     keyword_query = _build_keyword_query(question, retrieval_query)
     source_names = _collect_source_names(raw_docs)
-    source_scope = _infer_source_scope(question, source_names)
+    source_scope = _infer_source_scope(question, source_names, raw_docs)
     print(f"Retrieval query:\n {retrieval_query}")
     if keyword_query != retrieval_query:
         print(f"Keyword query:\n {keyword_query}")

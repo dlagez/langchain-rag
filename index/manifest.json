@@ -1,0 +1,1 @@
+{"fingerprint": "1194990f4a94c57dd5c5ce06720ebb48aaf9a571174d0bfcda4d0798a6312939", "embedding_model": "text-embedding-004", "chunk_size": 800, "chunk_overlap": 100, "collection_name": "rag_docs", "qdrant_location": "index/qdrant", "ingestion_schema": "contract_approval_v2", "doc_count": 2504}
