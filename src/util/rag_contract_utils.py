@@ -1,0 +1,636 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+import logging
+from pathlib import Path
+import re
+
+import numpy as np
+from langchain_core.documents import Document
+from qdrant_client.http.models import FieldCondition, Filter, MatchValue
+
+from .contract_attachment_selector import ContractAttachmentSelector
+from .document_utils import _doc_signature, _format_source
+from .keyword_utils import _extract_source_hint
+
+
+def _source_type_filter(source_type: str) -> Filter:
+    return Filter(
+        must=[
+            FieldCondition(
+                key="metadata.source_type", match=MatchValue(value=source_type)
+            )
+        ]
+    )
+
+
+def _normalize_retriever_labels(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item) for item in value if item]
+    return [str(value)]
+
+
+def _tag_retriever(docs: list[Document], label: str) -> list[Document]:
+    for doc in docs:
+        if doc.metadata is None or not isinstance(doc.metadata, dict):
+            doc.metadata = {}
+        labels = _normalize_retriever_labels(doc.metadata.get("_retriever"))
+        if label not in labels:
+            labels.append(label)
+        doc.metadata["_retriever"] = labels
+    return docs
+
+
+def _merge_retriever_labels(target: Document, incoming: Document) -> None:
+    if target.metadata is None or not isinstance(target.metadata, dict):
+        target.metadata = {}
+    incoming_labels = _normalize_retriever_labels(
+        incoming.metadata.get("_retriever") if incoming.metadata else None
+    )
+    if not incoming_labels:
+        return
+    target_labels = _normalize_retriever_labels(
+        target.metadata.get("_retriever")
+    )
+    merged = list(dict.fromkeys(target_labels + incoming_labels))
+    target.metadata["_retriever"] = merged
+
+
+def _merge_docs_with_retriever(
+    primary: list[Document], secondary: list[Document]
+) -> list[Document]:
+    seen: dict[tuple, Document] = {}
+    merged: list[Document] = []
+    for doc in primary + secondary:
+        key = _doc_signature(doc)
+        existing = seen.get(key)
+        if existing is None:
+            merged.append(doc)
+            seen[key] = doc
+        else:
+            _merge_retriever_labels(existing, doc)
+    return merged
+
+
+def _format_retriever(doc: Document) -> str:
+    labels = _normalize_retriever_labels(
+        doc.metadata.get("_retriever") if doc.metadata else None
+    )
+    if not labels:
+        return "unknown"
+    return "+".join(sorted(set(labels)))
+
+
+def _unique_sources_with_retriever(docs: list[Document]) -> list[str]:
+    seen: dict[str, set[str]] = {}
+    order: list[str] = []
+    for doc in docs:
+        label = _format_source(doc)
+        retriever = _format_retriever(doc)
+        if label not in seen:
+            seen[label] = set()
+            order.append(label)
+        seen[label].add(retriever)
+    output: list[str] = []
+    for label in order:
+        retrievers = "+".join(sorted(seen[label]))
+        output.append(f"{label} ({retrievers})")
+    return output
+
+
+_KEYWORD_PUNCTUATION = " ,.;:?!、。，；：？！"
+_PERCENT_RE = re.compile(r"^\d{1,2}[%％]$")
+
+
+def _regex_keywords_from_query(keyword_query: str) -> list[str]:
+    if not keyword_query:
+        return []
+    tokens: list[str] = []
+    for raw in keyword_query.split():
+        token = raw.strip(_KEYWORD_PUNCTUATION)
+        if not token:
+            continue
+        if "?" in raw or "？" in raw:
+            if len(token) > 8:
+                continue
+            token = token.replace("?", "").replace("？", "")
+        if len(token) < 2 and not re.search(r"\d", token):
+            continue
+        tokens.append(token)
+    return list(dict.fromkeys(tokens))
+
+
+def _regex_keyword_patterns(tokens: list[str]) -> list[str]:
+    patterns: list[str] = []
+    for token in tokens:
+        if _PERCENT_RE.fullmatch(token):
+            number = re.search(r"\d{1,2}", token)
+            if number:
+                patterns.append(f"{number.group(0)}\\s*[%％]")
+            continue
+        patterns.append(re.escape(token))
+    return patterns
+
+
+def _regex_attachment_fallback(
+    docs: list[Document],
+    keyword_query: str,
+    limit: int,
+    source_scope: "SourceScope | None",
+) -> list[Document]:
+    tokens = _regex_keywords_from_query(keyword_query)
+    if not tokens:
+        return []
+    patterns = _regex_keyword_patterns(tokens)
+    if not patterns:
+        return []
+    pattern = re.compile("|".join(patterns))
+    scored: list[tuple[int, Document]] = []
+    for doc in docs:
+        metadata = doc.metadata or {}
+        source = metadata.get("source") or ""
+        name = Path(source).name
+        source_type = metadata.get("source_type")
+        if source_type != "attachment" and not name.startswith(
+            _ATTACHMENT_PREFIX
+        ):
+            continue
+        if source_scope and source_scope.is_active():
+            if not name or not _doc_in_scope(name, source_scope):
+                continue
+        text = doc.page_content
+        if not text:
+            continue
+        matches = pattern.findall(text)
+        if matches:
+            scored.append((len(matches), doc))
+    scored.sort(key=lambda item: (-item[0], item[1].metadata.get("page") or 0))
+    return [doc for _, doc in scored[:limit]]
+
+
+_QUESTION_WORDS = ("什么", "多少", "几", "如何", "是否", "哪里", "哪", "谁")
+_DOMAIN_HINTS = ("增值税", "税率", "计税", "征收率", "发票", "项目计税类型")
+_RULE_MARKERS = ("规则", "不得", "仅", "若", "否则", "返回", "输出", "识别")
+_IGNORE_LINE_RE = re.compile(r"^\s*(\d+[\.\)]|[-*•])\s*")
+_IGNORE_STARTS = ("你是", "你的任务", "请严格", "注意", "说明")
+_KEYWORD_HINTS = (
+    "增值税税率",
+    "税率",
+    "征收率",
+    "计税方法",
+    "一般计税",
+    "简易计算",
+    "增值税专用发票",
+    "增值税普通发票",
+)
+
+_FORM_PREFIX = "表单"
+_ATTACHMENT_PREFIX = "附件"
+_FORM_FIELD_MAX_LEN = 28
+_FORM_FIELD_HINTS = (
+    "编号",
+    "流程",
+    "项目",
+    "合同",
+    "税率",
+    "金额",
+    "类型",
+    "意见",
+    "备注",
+)
+_PROCESS_ID_FIELD_HINTS = (
+    "流程",
+    "实例",
+    "编号",
+    "单号",
+    "表单编号",
+    "process",
+    "instance",
+    "id",
+)
+_VALUE_HINTS = ("下载", "查看")
+_VALUE_FILE_RE = re.compile(
+    r"\.(pdf|docx|doc|xlsx|xls|csv|png|jpg|jpeg|bmp|tif|tiff)\b",
+    re.IGNORECASE,
+)
+_VALUE_NUMERIC_RE = re.compile(r"^[\d\s,\.\-/%()％（）]+$")
+
+
+@dataclass(frozen=True)
+class SourceScope:
+    names: tuple[str, ...] = ()
+    prefix: str | None = None
+    include_terms: tuple[str, ...] = ()
+    exclude_terms: tuple[str, ...] = ()
+
+    def is_active(self) -> bool:
+        return bool(self.names or self.prefix or self.include_terms or self.exclude_terms)
+
+
+def _is_rule_like(line: str) -> bool:
+    if _IGNORE_LINE_RE.match(line):
+        return True
+    if any(line.startswith(prefix) for prefix in _IGNORE_STARTS):
+        return True
+    if any(marker in line for marker in _RULE_MARKERS) and not line.endswith(("?", "？")):
+        return True
+    return False
+
+
+def _build_retrieval_query(prompt: str) -> str:
+    lines = [line.strip() for line in prompt.splitlines() if line.strip()]
+    if not lines:
+        return prompt.strip()
+
+    candidates: list[str] = []
+    for line in lines:
+        if _is_rule_like(line):
+            continue
+        if line.endswith(("?", "？")) or any(word in line for word in _QUESTION_WORDS):
+            candidates.append(line)
+            continue
+        if any(hint in line for hint in _DOMAIN_HINTS) and len(line) <= 80:
+            candidates.append(line)
+
+    if candidates:
+        seen = set()
+        deduped = []
+        for line in candidates:
+            if line not in seen:
+                seen.add(line)
+                deduped.append(line)
+        return " ".join(deduped[:3])
+
+    return lines[-1]
+
+
+def _extract_prompt_keywords(prompt: str) -> list[str]:
+    matches: list[str] = []
+    for hint in _KEYWORD_HINTS:
+        if hint in prompt:
+            matches.append(hint)
+    for hint in _DOMAIN_HINTS:
+        if hint in prompt and hint not in matches:
+            matches.append(hint)
+    for item in re.findall(r"\d{1,2}%|\d{1,2}\s*%", prompt):
+        token = item.replace(" ", "")
+        if token not in matches:
+            matches.append(token)
+    return matches
+
+
+def _build_keyword_query(prompt: str, base_query: str) -> str:
+    keywords = _extract_prompt_keywords(prompt)
+    if not keywords:
+        return base_query
+    combined = [base_query] if base_query else []
+    combined.extend(keywords[:8])
+    return " ".join(combined)
+
+
+def _collect_source_names(raw_docs: list[Document]) -> list[str]:
+    seen: set[str] = set()
+    names: list[str] = []
+    for doc in raw_docs:
+        source = doc.metadata.get("source") if doc.metadata else None
+        if not source:
+            continue
+        name = Path(source).name
+        if name and name not in seen:
+            seen.add(name)
+            names.append(name)
+    return sorted(names)
+
+
+def _match_source_names(scope: SourceScope, source_names: list[str]) -> list[str]:
+    return [name for name in source_names if _doc_in_scope(name, scope)]
+
+
+def _infer_explicit_sources(prompt: str, source_names: list[str]) -> list[str]:
+    matches: list[str] = []
+    for name in source_names:
+        if name and name in prompt:
+            matches.append(name)
+            continue
+        stem = Path(name).stem
+        if stem and stem in prompt:
+            matches.append(name)
+    if not matches:
+        return []
+    max_len = max(len(item) for item in matches)
+    return [item for item in matches if len(item) == max_len]
+
+
+def _infer_source_scope(
+    prompt: str,
+    source_names: list[str],
+    raw_docs: list[Document] | None = None,
+) -> SourceScope:
+    explicit = _infer_explicit_sources(prompt, source_names)
+    if explicit:
+        return SourceScope(names=tuple(explicit))
+
+    include_terms: list[str] = []
+    exclude_terms: list[str] = []
+    prefix: str | None = None
+
+    if "表单" in prompt or "审批表" in prompt:
+        prefix = "表单"
+
+    if any(term in prompt for term in ("附件", "合同", "招标文件", "通知书", "协议")):
+        if prefix is None:
+            prefix = "附件"
+
+    if raw_docs is not None and "合同" in prompt:
+        selector = ContractAttachmentSelector()
+        contract_names = selector.select_contract_names(raw_docs, top_k=1)
+        if contract_names:
+            return SourceScope(names=tuple(contract_names))
+
+    if "招标文件" in prompt:
+        prefix = "附件"
+        include_terms = ["招标文件"]
+    elif "通知书" in prompt:
+        prefix = "附件"
+        include_terms = ["通知书"]
+    elif "协议" in prompt and "合同" not in prompt:
+        prefix = "附件"
+        include_terms = ["协议"]
+    elif "附件" in prompt and "合同" in prompt:
+        prefix = "附件"
+        include_terms = ["合同"]
+        exclude_terms = ["招标文件"]
+    elif "合同" in prompt and prefix == "附件":
+        include_terms = ["合同"]
+        exclude_terms = ["招标文件"]
+
+    hint = _extract_source_hint(prompt)
+    if hint and hint not in include_terms:
+        include_terms.append(hint)
+
+    include_terms = list(dict.fromkeys(include_terms))
+    exclude_terms = list(dict.fromkeys(exclude_terms))
+
+    return SourceScope(
+        prefix=prefix,
+        include_terms=tuple(include_terms),
+        exclude_terms=tuple(exclude_terms),
+    )
+
+
+def _format_source_scope(scope: SourceScope) -> str:
+    parts: list[str] = []
+    if scope.names:
+        parts.append("files=" + ", ".join(scope.names))
+    if scope.prefix:
+        parts.append(f"prefix={scope.prefix}")
+    if scope.include_terms:
+        parts.append("include=" + ", ".join(scope.include_terms))
+    if scope.exclude_terms:
+        parts.append("exclude=" + ", ".join(scope.exclude_terms))
+    return "; ".join(parts)
+
+
+def _doc_in_scope(name: str, scope: SourceScope) -> bool:
+    if scope.names and name not in scope.names:
+        return False
+    if scope.prefix and not name.startswith(scope.prefix):
+        return False
+    if scope.include_terms and not all(term in name for term in scope.include_terms):
+        return False
+    if scope.exclude_terms and any(term in name for term in scope.exclude_terms):
+        return False
+    return True
+
+
+def _filter_docs_by_scope(
+    docs: list[Document], scope: SourceScope | None
+) -> list[Document]:
+    if scope is None or not scope.is_active():
+        return docs
+    filtered: list[Document] = []
+    for doc in docs:
+        source = doc.metadata.get("source") or ""
+        name = Path(source).name
+        if name and _doc_in_scope(name, scope):
+            filtered.append(doc)
+    return filtered
+
+
+def _filter_docs_and_scores_by_scope(
+    docs: list[Document],
+    scores: np.ndarray,
+    scope: SourceScope | None,
+) -> tuple[list[Document], np.ndarray]:
+    if scope is None or not scope.is_active():
+        return docs, scores
+    indices = []
+    for idx, doc in enumerate(docs):
+        source = doc.metadata.get("source") or ""
+        name = Path(source).name
+        if name and _doc_in_scope(name, scope):
+            indices.append(idx)
+    if not indices:
+        return [], scores[:0]
+    filtered_docs = [docs[idx] for idx in indices]
+    if scores.size == 0:
+        return filtered_docs, scores
+    try:
+        filtered_scores = scores[indices]
+    except Exception:
+        filtered_scores = np.array([scores[idx] for idx in indices], dtype=scores.dtype)
+    return filtered_docs, filtered_scores
+
+
+def _normalize_lines(text: str) -> list[str]:
+    cleaned = text.replace("\r\n", "\n").replace("\r", "\n")
+    return [line.strip() for line in cleaned.split("\n") if line.strip()]
+
+
+def _looks_like_field_name(line: str) -> bool:
+    if not line or len(line) > _FORM_FIELD_MAX_LEN:
+        return False
+    if _VALUE_FILE_RE.search(line):
+        return False
+    if any(token in line for token in _VALUE_HINTS):
+        return False
+    if _VALUE_NUMERIC_RE.fullmatch(line):
+        return False
+    if re.search(r"\d", line) and len(line) <= 8:
+        return False
+    return True
+
+
+def _is_strong_field_name(line: str) -> bool:
+    if line.endswith((":", "：")):
+        return True
+    return any(hint in line for hint in _FORM_FIELD_HINTS)
+
+
+def _parse_form_fields(text: str) -> list[tuple[str, str]]:
+    lines = _normalize_lines(text)
+    if not lines:
+        return []
+    fields: list[tuple[str, str]] = []
+    current_field: str | None = None
+    current_values: list[str] = []
+    for line in lines:
+        if current_field is None:
+            current_field = line
+            continue
+        if _looks_like_field_name(line):
+            if current_values:
+                value = "\n".join(current_values).strip()
+                if value:
+                    fields.append((current_field, value))
+                current_field = line
+                current_values = []
+                continue
+            if _is_strong_field_name(line):
+                value = "\n".join(current_values).strip()
+                if value:
+                    fields.append((current_field, value))
+                current_field = line
+                current_values = []
+                continue
+        current_values.append(line)
+
+    if current_field:
+        value = "\n".join(current_values).strip()
+        if value:
+            fields.append((current_field, value))
+    return fields
+
+
+def _split_attachment_paragraphs(text: str) -> list[str]:
+    if not text:
+        return []
+    blocks = [block.strip() for block in re.split(r"\n{2,}", text) if block.strip()]
+    if len(blocks) > 1:
+        return blocks
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if len(lines) > 1:
+        return lines
+    return [text.strip()] if text.strip() else []
+
+
+def _doc_id_from_source(source: str, source_dir: Path) -> str:
+    try:
+        return str(Path(source).resolve().relative_to(source_dir.resolve()))
+    except Exception:
+        return Path(source).name
+
+
+def _infer_process_id_from_fields(
+    form_fields: list[tuple[str, str]],
+) -> str | None:
+    for field, value in form_fields:
+        if any(hint in field for hint in _PROCESS_ID_FIELD_HINTS):
+            token = value.strip().split()[0] if value else ""
+            if token:
+                return token
+    return None
+
+
+def _build_contract_documents(
+    raw_docs: list[Document],
+    source_dir: Path,
+    process_id: str | None,
+    created_at: str | None,
+) -> tuple[list[Document], str | None]:
+    grouped: dict[str, list[Document]] = {}
+    for doc in raw_docs:
+        source = doc.metadata.get("source") if doc.metadata else None
+        if not source:
+            continue
+        grouped.setdefault(source, []).append(doc)
+
+    form_fields_by_source: dict[str, list[tuple[str, str]]] = {}
+    for source, docs in grouped.items():
+        name = Path(source).name
+        if name.startswith(_FORM_PREFIX):
+            combined = "\n".join(doc.page_content for doc in docs)
+            form_fields_by_source[source] = _parse_form_fields(combined)
+
+    inferred_process_id = process_id
+    if inferred_process_id is None:
+        candidates = []
+        for fields in form_fields_by_source.values():
+            candidate = _infer_process_id_from_fields(fields)
+            if candidate:
+                candidates.append(candidate)
+        if candidates:
+            inferred_process_id = candidates[0]
+            if len(set(candidates)) > 1:
+                logging.warning(
+                    "Multiple process_id values detected; using %s.",
+                    inferred_process_id,
+                )
+
+    output_docs: list[Document] = []
+    for source, docs in grouped.items():
+        name = Path(source).name
+        doc_id = _doc_id_from_source(source, source_dir)
+        base_meta: dict[str, object] = {"source": source, "doc_id": doc_id}
+        if inferred_process_id:
+            base_meta["process_id"] = inferred_process_id
+        if created_at:
+            base_meta["created_at"] = created_at
+
+        if name.startswith(_FORM_PREFIX):
+            fields = form_fields_by_source.get(source, [])
+            if not fields:
+                combined = "\n".join(doc.page_content for doc in docs).strip()
+                if combined:
+                    fields = [("raw_text", combined)]
+            for field, value in fields:
+                content = f"{field}: {value}".strip()
+                metadata = dict(base_meta)
+                metadata["source_type"] = "form"
+                metadata["field"] = field
+                output_docs.append(Document(page_content=content, metadata=metadata))
+            continue
+
+        filename = name
+        if name.startswith(_ATTACHMENT_PREFIX):
+            filename = name[len(_ATTACHMENT_PREFIX) :]
+
+        for doc in docs:
+            page = doc.metadata.get("page") if doc.metadata else None
+            if page is None:
+                paragraphs = _split_attachment_paragraphs(doc.page_content)
+            else:
+                paragraphs = [doc.page_content]
+
+            for paragraph in paragraphs:
+                paragraph = paragraph.strip()
+                if not paragraph:
+                    continue
+                metadata = dict(base_meta)
+                metadata["source_type"] = "attachment"
+                metadata["filename"] = filename
+                if page is not None:
+                    metadata["page"] = page
+                output_docs.append(
+                    Document(page_content=paragraph, metadata=metadata)
+                )
+
+    return output_docs, inferred_process_id
+
+
+def _assign_chunk_ids(docs: list[Document]) -> list[Document]:
+    counters: dict[tuple[object, ...], int] = {}
+    for doc in docs:
+        if doc.metadata is None:
+            doc.metadata = {}
+        key = (
+            doc.metadata.get("doc_id"),
+            doc.metadata.get("field"),
+            doc.metadata.get("page"),
+        )
+        counters.setdefault(key, 0)
+        doc.metadata["chunk_id"] = counters[key]
+        counters[key] += 1
+    return docs
