@@ -355,6 +355,7 @@ def main() -> None:
     prompt_path.write_text(prompt, encoding="utf-8")
     response = llm.invoke(prompt)
 
+    print(f"Question: {question}")
     print(f"Prompt saved to {prompt_path}")
     print("Answer:\n", _response_text(response.content))
     print(f"\nRetrieval: {strategy}")

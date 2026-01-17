@@ -18,6 +18,23 @@ Notes:
 The vector store uses Qdrant in local mode by default, persisted under `index/qdrant`.
 To use a running Qdrant server instead, set `QDRANT_URL` (and `QDRANT_API_KEY` if needed).
 
+## Vector store structure
+Data is stored in a single Qdrant collection (name from `QDRANT_COLLECTION`, default
+`contract_approval_rag`). Each chunk becomes one point with a vector and payload.
+
+Payload shape:
+- `page_content`: chunk text
+- `metadata`: fields like `source`, `doc_id`, `source_type`, `field`, `page`,
+  `chunk_id`, `doc_type_hint`, `chunk_type`, `process_id`, `created_at`, `filename`
+
+To inspect stored chunks directly (no re-chunking), use:
+```bash
+python tests/inspect_chunks.py --limit 5 --max-chars 400
+```
+
+Notes:
+- `index/manifest.json` includes `doc_count` for the current collection.
+
 ## Local PPOCR
 `src/ppocr_pdf_tool.py` provides local OCR utilities using PaddleOCR:
 - `PdfImageTool` renders PDF pages to PNG bytes.
@@ -58,7 +75,7 @@ Optional:
 - `RAG_CHUNK_OVERLAP`: overlap used for length-based splits (default: `100`).
 - `RAG_ALPHA`: hybrid retrieval mix (default: `0.7`).
 - `QDRANT_PATH`: local Qdrant storage path (default: `index/qdrant`).
-- `QDRANT_COLLECTION`: collection name for vectors (default: `rag_docs`).
+- `QDRANT_COLLECTION`: collection name for vectors (default: `contract_approval_rag`).
 - `QDRANT_URL`: connect to a Qdrant server instead of local mode.
 - `QDRANT_API_KEY`: API key for Qdrant server.
 - `QUESTION`: default prompt text when no CLI question is provided.
@@ -84,7 +101,7 @@ RAG_CHUNK_SIZE=800
 RAG_CHUNK_OVERLAP=100
 RAG_ALPHA=0.7
 QDRANT_PATH=index/qdrant
-QDRANT_COLLECTION=rag_docs
+QDRANT_COLLECTION=contract_approval_rag
 QUESTION="What is the VAT rate stated in the contract?\nOnly use values explicitly present."
 PROCESS_ID=your_process_id
 PPOCR_USE_GPU=0
