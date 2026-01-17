@@ -37,6 +37,15 @@ def _parse_args() -> argparse.Namespace:
         help="Only show chunks whose source filename contains this string.",
     )
     parser.add_argument(
+        "--chunk-id",
+        type=int,
+        help="Only show chunks whose metadata chunk_id matches.",
+    )
+    parser.add_argument(
+        "--point-id",
+        help="Only show the point with this id (int or uuid).",
+    )
+    parser.add_argument(
         "--batch-size",
         type=int,
         default=64,
@@ -52,6 +61,27 @@ def _parse_args() -> argparse.Namespace:
 def _doc_source_name(metadata: dict) -> str:
     source = metadata.get("source") or "unknown"
     return Path(source).name
+
+
+def _metadata_matches_chunk_id(metadata: dict, target: int) -> bool:
+    if "chunk_id" not in metadata:
+        return False
+    value = metadata.get("chunk_id")
+    return str(value) == str(target)
+
+
+def _parse_point_id(value: str):
+    if value is None:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    if text.lstrip("-").isdigit():
+        try:
+            return int(text)
+        except ValueError:
+            return text
+    return text
 
 
 def _format_meta(metadata: dict, point_id) -> str:
@@ -101,6 +131,64 @@ def main() -> None:
     if total is not None:
         print(f"Total chunks (collection count): {total}")
 
+    if args.point_id:
+        point_id = _parse_point_id(args.point_id)
+        if hasattr(client, "retrieve"):
+            points = client.retrieve(
+                collection_name=collection,
+                ids=[point_id],
+                with_payload=True,
+                with_vectors=False,
+            )
+        else:
+            points = []
+
+        if not points:
+            print(f"No point found for id: {args.point_id}")
+            return
+
+        sizes = []
+        printed = 0
+        scanned = 0
+        for point in points:
+            scanned += 1
+            payload = point.payload or {}
+            text = payload.get("page_content") or ""
+            metadata = payload.get("metadata") or {}
+            if not isinstance(metadata, dict):
+                metadata = {}
+            size = len(text)
+            sizes.append(size)
+
+            if args.source_contains:
+                if args.source_contains not in _doc_source_name(metadata):
+                    continue
+            if args.chunk_id is not None:
+                if not _metadata_matches_chunk_id(metadata, args.chunk_id):
+                    continue
+
+            if args.limit and printed >= args.limit:
+                continue
+
+            display = text
+            if args.max_chars and len(display) > args.max_chars:
+                display = display[: args.max_chars].rstrip() + "..."
+            print("")
+            print(f"--- Chunk {printed + 1} ({size} chars) ---")
+            print(_format_meta(metadata, getattr(point, "id", None)))
+            print(display)
+            printed += 1
+
+        if sizes:
+            print(
+                "Size stats (chars) for scanned: "
+                f"min={min(sizes)} max={max(sizes)} avg={mean(sizes):.1f}"
+            )
+        print(f"Scanned chunks: {scanned}")
+        if printed == 0:
+            print("No chunks matched the current filters.")
+        return
+
     sizes = []
     printed = 0
     scanned = 0
@@ -135,6 +223,9 @@ def main() -> None:
 
             if args.source_contains:
                 if args.source_contains not in _doc_source_name(metadata):
+                    continue
+            if args.chunk_id is not None:
+                if not _metadata_matches_chunk_id(metadata, args.chunk_id):
                     continue
 
             if args.limit and printed >= args.limit:
@@ -172,6 +263,9 @@ if __name__ == "__main__":
 
 # python tests/inspect_chunks.py --limit 1 --max-chars 400
 # python tests/inspect_chunks.py --source-contains 合同 --limit 3 --max-chars 0
+# python tests/inspect_chunks.py --chunk-id 0 --max-chars 400
+# python tests/inspect_chunks.py --point-id 100 --collection rag_docs
+
 # --source-contains 合同 只看文件名包含“合同”的 chunk
 # --collection your_collection 覆盖 QDRANT_COLLECTION
 # --batch-size 100 调整 scroll 批大小
