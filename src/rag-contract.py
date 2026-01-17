@@ -13,6 +13,7 @@ from langchain_core.documents import Document
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from qdrant_client.http.models import FieldCondition, Filter, MatchValue
 
+from util.contract_attachment_selector import ContractAttachmentSelector
 from util.util import (
     _build_index_manifest,
     _collection_exists,
@@ -418,124 +419,6 @@ def _collect_source_names(raw_docs: list[Document]) -> list[str]:
     return sorted(names)
 
 
-_CONTRACT_NAME_STRONG = (
-    "建设工程施工合同",
-    "施工合同",
-    "合同协议书",
-    "合同条款",
-)
-_CONTRACT_NAME_EXCLUDES = (
-    "条款核对",
-    "核对",
-    "对照",
-    "招标文件",
-    "投标文件",
-    "中标通知书",
-    "答疑",
-    "澄清",
-    "控制价",
-    "报告书",
-    "清单",
-    "汇总",
-    "说明",
-    "补遗",
-    "更正",
-    "图纸",
-    "纪要",
-)
-_CONTRACT_TEXT_STRONG = (
-    "发包人",
-    "承包人",
-    "合同价款",
-    "签订地点",
-    "签订日期",
-    "通用合同条款",
-    "专用合同条款",
-    "工程名称",
-    "工期",
-)
-_CONTRACT_TEXT_EXCLUDES = (
-    "投标人",
-    "招标人",
-    "评标委员会",
-    "招标文件",
-    "答疑",
-    "澄清",
-)
-
-
-def _contract_text_sample(docs: list[Document], limit: int = 4000) -> str:
-    if not docs:
-        return ""
-    chunks: list[str] = []
-    total = 0
-    for doc in docs:
-        text = doc.page_content or ""
-        if not text:
-            continue
-        if total + len(text) > limit:
-            remaining = max(0, limit - total)
-            if remaining:
-                chunks.append(text[:remaining])
-            break
-        chunks.append(text)
-        total += len(text)
-        if total >= limit:
-            break
-    return "\n".join(chunks)
-
-
-def _score_contract_candidate(name: str, text: str) -> int:
-    score = 0
-    strong_hit = False
-    for term in _CONTRACT_NAME_STRONG:
-        if term in name:
-            score += 6
-            strong_hit = True
-    if not strong_hit and "合同" in name:
-        score += 2
-    for term in _CONTRACT_NAME_EXCLUDES:
-        if term in name:
-            score -= 8
-    for term in _CONTRACT_TEXT_STRONG:
-        if term in text:
-            score += 2
-    if "发包人" in text and "承包人" in text:
-        score += 4
-    if "合同价款" in text:
-        score += 3
-    for term in _CONTRACT_TEXT_EXCLUDES:
-        if term in text:
-            score -= 3
-    return score
-
-
-def _select_contract_names(raw_docs: list[Document]) -> list[str]:
-    if not raw_docs:
-        return []
-    grouped: dict[str, list[Document]] = {}
-    for doc in raw_docs:
-        metadata = doc.metadata or {}
-        if metadata.get("source_type") != "attachment":
-            continue
-        source = metadata.get("source")
-        if not source:
-            continue
-        name = Path(source).name
-        grouped.setdefault(name, []).append(doc)
-    scored: list[tuple[int, str]] = []
-    for name, docs in grouped.items():
-        text_sample = _contract_text_sample(docs)
-        score = _score_contract_candidate(name, text_sample)
-        if score > 0:
-            scored.append((score, name))
-    if not scored:
-        return []
-    scored.sort(key=lambda item: (-item[0], len(item[1])))
-    max_score = scored[0][0]
-    return [name for score, name in scored if score >= max_score - 2]
-
-
 def _match_source_names(scope: SourceScope, source_names: list[str]) -> list[str]:
     return [name for name in source_names if _doc_in_scope(name, scope)]
 
@@ -576,7 +459,8 @@ def _infer_source_scope(
             prefix = "附件"
 
     if raw_docs is not None and "合同" in prompt:
-        contract_names = _select_contract_names(raw_docs)
+        selector = ContractAttachmentSelector()
+        contract_names = selector.select_contract_names(raw_docs, top_k=1)
         if contract_names:
             return SourceScope(names=tuple(contract_names))
 
