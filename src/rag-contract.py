@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import logging
 import os
 import numpy as np
@@ -61,7 +62,15 @@ def retrieve_documents(
     source_scope: "SourceScope | None" = None,
     keyword_query: str | None = None,
 ) -> tuple[list[Document], str]:
+    """
+    核心召回流程：
+    1) 向量检索：分别检索表单与附件，融合向量分数。
+    2) 范围过滤：根据 SourceScope 限定候选来源。
+    3) 关键词/正则回退：在原始文档中进行字面命中兜底。
+    4) 融合与裁剪：合并召回结果并返回最终 Top-k 及策略标识。
+    """
     fetch_k = max(fetch_k, k)
+    # 兜底召回使用原始文档（先做范围过滤，减少无关文本）
     fallback_docs = _filter_docs_by_scope(raw_docs, source_scope)
     # 向量检索：分别对表单与附件进行召回
     query_vec = embedder.embed_query(query)
@@ -107,7 +116,7 @@ def retrieve_documents(
         print("No documents matched the current retrieval scope.")
     # 结合关键词分数与向量分数进行融合重排
     docs = _hybrid_rerank(query, docs, vector_scores, k=k, alpha=alpha)
-    # 将关键词检索作为备选召回路径
+    # 将关键词检索作为备选召回路径（默认用原始 query）
     if keyword_query is None:
         keyword_query = query
     # 兜底召回：正则/关键词规则补充召回结果
@@ -129,6 +138,7 @@ def retrieve_documents(
     # 优先合并兜底命中，保证召回稳定性
     if keyword_docs:
         if docs:
+            # 先合并兜底结果，再裁剪到 Top-k
             docs = _merge_docs_with_retriever(keyword_docs, docs)[:k]
             if had_regex and had_keyword:
                 return docs, "hybrid+keyword+regex"
@@ -147,6 +157,7 @@ def retrieve_documents(
         if keyword_docs:
             return keyword_docs, "keyword_fallback"
 
+    # 返回融合后的向量召回结果
     return docs, "hybrid"
 
 
@@ -156,14 +167,21 @@ def get_vectorstore(
     processed_dir: Path,
     force_rebuild: bool = False,
 ):
+    """
+    根据文档构建/复用向量库：生成索引清单、检查缓存一致性，
+    必要时重建集合并写入向量，最终返回 client/collection/embeddings。
+    """
     embedding_model = os.getenv("GOOGLE_EMBEDDING_MODEL", "text-embedding-004")
     chunk_size = int(os.getenv("RAG_CHUNK_SIZE", "800"))
+    # 理论上用于文本分块时的重叠长度，保证相邻 chunk 之间有上下文衔接（减少边界信息丢失）
     chunk_overlap = int(os.getenv("RAG_CHUNK_OVERLAP", "100"))
     collection_name = os.getenv("QDRANT_COLLECTION", "contract_approval_rag")
     qdrant_location = _qdrant_location(persist_dir)
 
     embeddings = GoogleGenerativeAIEmbeddings(model=embedding_model)
-    # 记录索引构建参数，便于复用缓存
+    # 生成“索引清单（manifest）”，用来判断能不能复用已建好的向量库，避免每次都重建。
+    # collection_name、qdrant_location、ingestion_schema：记录这次索引用的集合名、存储位置、以及你的自定义版本号/结构标识。
+    # 后面会把这份 manifest 和磁盘上已有的 manifest 对比；如果一致，就直接复用现有向量库，不重建。
     manifest = _build_index_manifest(
         processed_dir, embedding_model, chunk_size, chunk_overlap
     )
@@ -181,8 +199,7 @@ def get_vectorstore(
         ):
             return client, collection_name, embeddings
 
-    # 分块、向量化并写入向量库
-    # 为分块添加 chunk_id 便于追踪
+    # 分块、向量化并写入向量库，为分块添加 chunk_id 便于追踪
     splits = _assign_chunk_ids(docs)
     if not splits:
         raise SystemExit("No content left after splitting documents.")
@@ -266,32 +283,7 @@ def main() -> None:
     model = os.getenv("GOOGLE_MODEL", "gemini-2.5-flash")
     llm = ChatGoogleGenerativeAI(model=model, temperature=0)
 
-    # question = args.question or os.getenv("QUESTION") or """
-    #     项目计税类型
-    #     用于识别合同中适用的增值税计税方式。
-    #     识别规则：
-    #     若合同中明确约定一般计税或简易计税，直接提取；
-    #     若未明确约定，通过税率（6%、9%、13%）或征收率（3%、5%）进行推断；
-    #     若仍未明确，结合项目类型并依据税法知识库进行推断；
-    #     无法唯一判断时，返回“未明确”。
-    
-    #     分别找出：施工合同审批表项目计税类型是什么？合同里面的项目计税类型是什么？"""
-    
-    # question = args.question or os.getenv("QUESTION") or "合同里面的项目计税类型你是怎么得出来的，我在合同里面没有找到项目计税类型相关信息。我需要对比施工合同审批表.txt，和合同里面的计税类型是否一致"
-
-    question = args.question or os.getenv("QUESTION") or """
-        你是一名合同税务信息抽取助手。
-        你的任务是从合同文本中识别并提取“增值税税率”。
-
-        识别规则：
-        1. 仅提取合同中明确出现的增值税税率数值，如：6%、9%、13%。
-        2. 若合同中出现“征收率”（如3%、5%），请区分其与税率的概念，不得将征收率作为税率输出。
-        3. 若合同中同时出现多个税率，仅在合同明确区分适用范围时分别列出；否则标记为“多税率，需人工确认”。
-        4. 若合同未明确出现任何增值税税率，不得根据项目类型或经验进行推断，直接返回“未明确”。
-
-        附件合同里面的增值税税率是多少？"""
-    
-    # 分别找出：施工合同审批表的增值税税率是多少？合同里面的增值税税率是多少？
+    question = args.question or os.getenv("QUESTION") or "hello"
     question = question.strip()
     if not question:
         return
@@ -344,9 +336,14 @@ def main() -> None:
         "If the answer is not in the context, say you do not know.\n\n"
         f"{context}\n\nQuestion: {question}\nAnswer:"
     )
+    prompt_dir = root / "data" / "prompt"
+    prompt_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    prompt_path = prompt_dir / f"prompt_{timestamp}.txt"
+    prompt_path.write_text(prompt, encoding="utf-8")
     response = llm.invoke(prompt)
 
-    print("Question:\n", question)
+    print(f"Prompt saved to {prompt_path}")
     print("Answer:\n", _response_text(response.content))
     print(f"\nRetrieval: {strategy}")
     print("\nSources:")
