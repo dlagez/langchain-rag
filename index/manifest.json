@@ -1,1 +1,1 @@
-{"fingerprint": "c229df7f81744259779ea99704afc7377520da1b6a93b6ad830dd71a4a17c111", "embedding_model": "text-embedding-004", "chunk_size": 800, "chunk_overlap": 100, "collection_name": "rag_docs", "qdrant_location": "index/qdrant", "doc_count": 473}
+{"fingerprint": "515e2d29d56f2628ff631cf521f3dec8be495f82d7ff0122ad42d5b124599873", "embedding_model": "text-embedding-004", "chunk_size": 800, "chunk_overlap": 100, "collection_name": "rag_docs", "qdrant_location": "index/qdrant", "ingestion_schema": "contract_approval_v2", "doc_count": 420}

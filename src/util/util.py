@@ -60,9 +60,7 @@ def _latin_keywords(text: str) -> list[str]:
 
 
 def _query_terms(query: str) -> tuple[list[str], list[str]]:
-    cjk = _cjk_ngrams(query, min_size=3, max_size=5)
-    if not cjk:
-        cjk = _cjk_ngrams(query, min_size=2, max_size=4)
+    cjk = _cjk_ngrams(query, min_size=2, max_size=5)
     if len(cjk) > 64:
         cjk = cjk[:64]
     latin = _latin_keywords(query)
@@ -135,6 +133,48 @@ def _keyword_fallback(docs: list[Document], query: str, limit: int = 3) -> list[
 def _normalize_text(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n").strip()
 
+def _garbled_score(text: str) -> int:
+    score = 0
+    for ch in text:
+        code = ord(ch)
+        if ch == "�":
+            score += 2
+        elif 0x00C0 <= code <= 0x00FF:
+            score += 1
+    return score
+
+
+def _cjk_count(text: str) -> int:
+    return sum(1 for ch in text if 0x4E00 <= ord(ch) <= 0x9FFF)
+
+
+def _looks_garbled(text: str) -> bool:
+    if not text:
+        return False
+    garbled = _garbled_score(text)
+    cjk = _cjk_count(text)
+    if garbled < 20:
+        return False
+    return cjk == 0 or garbled > cjk * 2
+
+
+def _maybe_repair_mojibake(text: str) -> str:
+    if not _looks_garbled(text):
+        return text
+    original_garbled = _garbled_score(text)
+    original_cjk = _cjk_count(text)
+    for encoding in ("utf-8", "gb18030"):
+        try:
+            repaired = text.encode("latin1").decode(encoding)
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            continue
+        if not repaired:
+            continue
+        if _garbled_score(repaired) < original_garbled and _cjk_count(
+            repaired
+        ) >= original_cjk:
+            return repaired
+    return text
 
 def _join_pages(pages: list[str]) -> str:
     chunks = []
@@ -157,6 +197,14 @@ def _split_pages(text: str, use_page_markers: bool = False) -> list[str]:
     return parts
 
 
+def _ensure_page_markers(text: str) -> str:
+    if not text:
+        return text
+    if "=== Page " in text:
+        return text
+    return f"=== Page 1 ===\n\n{text}"
+
+
 def _write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
@@ -164,12 +212,13 @@ def _write_text(path: Path, text: str) -> None:
 
 def _read_text_with_fallback(path: Path) -> str:
     try:
-        return path.read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8")
     except UnicodeDecodeError:
         try:
-            return path.read_text(encoding="gb18030")
+            text = path.read_text(encoding="gb18030")
         except UnicodeDecodeError:
-            return path.read_text(encoding="utf-8", errors="replace")
+            text = path.read_text(encoding="utf-8", errors="replace")
+    return _maybe_repair_mojibake(text)
 
 
 def _build_metadata(path: Path, page: int | None = None) -> dict:
@@ -207,13 +256,43 @@ def _extract_docx_text(path: Path) -> str:
     from docx import Document as DocxDocument
 
     doc = DocxDocument(str(path))
-    parts = [p.text for p in doc.paragraphs if p.text.strip()]
+    parts: list[str] = []
+    page_number = 1
+    parts.append(f"=== Page {page_number} ===")
+
+    def add_text(text: str) -> None:
+        text = text.strip()
+        if text:
+            parts.append(text)
+
+    def has_page_break(paragraph) -> bool:
+        element = getattr(paragraph, "_p", None)
+        if element is None:
+            return False
+        ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+        xpath = ".//w:br[@w:type='page'] | .//w:lastRenderedPageBreak"
+        try:
+            return bool(element.xpath(xpath, namespaces=ns))
+        except TypeError:
+            return bool(
+                element.xpath(
+                    ".//*[local-name()='br' and @*[local-name()='type']='page']"
+                    " | .//*[local-name()='lastRenderedPageBreak']"
+                )
+            )
+
+    for paragraph in doc.paragraphs:
+        add_text(paragraph.text)
+        if has_page_break(paragraph):
+            page_number += 1
+            parts.append(f"=== Page {page_number} ===")
     for table in doc.tables:
         for row in table.rows:
             cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
             if cells:
                 parts.append("\t".join(cells))
-    return _normalize_text("\n".join(parts))
+    text = _normalize_text("\n".join(parts))
+    return _ensure_page_markers(_maybe_repair_mojibake(text))
 
 
 def _extract_excel_text(path: Path) -> str:
@@ -297,7 +376,9 @@ def _extract_doc_text(path: Path) -> str:
     ):
         text = extractor(path)
         if text is not None:
-            return _normalize_text(text)
+            return _ensure_page_markers(
+                _maybe_repair_mojibake(_normalize_text(text))
+            )
     raise RuntimeError(
         "Missing .doc extractor. Install textract/pywin32 or LibreOffice for .doc files."
     )
@@ -343,7 +424,10 @@ def _extract_text_from_file(
         return _docs_from_text(path, text, use_page_markers=True, force_page=True), text
     if suffix == ".docx":
         text = _extract_docx_text(path)
-        return _docs_from_text(path, text), text
+        return (
+            _docs_from_text(path, text, use_page_markers=True, force_page=True),
+            text,
+        )
     if suffix in (".xls", ".xlsx"):
         text = _extract_excel_text(path)
         return _docs_from_text(path, text), text
@@ -359,7 +443,10 @@ def _extract_text_from_file(
         return _docs_from_text(path, text), text
     if suffix == ".doc":
         text = _extract_doc_text(path)
-        return _docs_from_text(path, text), text
+        return (
+            _docs_from_text(path, text, use_page_markers=True, force_page=True),
+            text,
+        )
     raise ValueError(f"Unsupported file type: {path}")
 
 
@@ -549,12 +636,14 @@ def _search_qdrant(
     collection_name: str,
     query_vector: list[float],
     limit: int,
+    query_filter=None,
 ):
     if hasattr(client, "search"):
         return client.search(
             collection_name=collection_name,
             query_vector=query_vector,
             limit=limit,
+            query_filter=query_filter,
             with_payload=True,
         )
     if hasattr(client, "query_points"):
@@ -562,6 +651,7 @@ def _search_qdrant(
             collection_name=collection_name,
             query=query_vector,
             limit=limit,
+            query_filter=query_filter,
             with_payload=True,
         )
         return getattr(response, "points", response)
