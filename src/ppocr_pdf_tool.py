@@ -236,7 +236,7 @@ class LocalPPOCRTool:
     @staticmethod
     def _resolve_timeout(timeout: float | None) -> float:
         if timeout is None:
-            timeout = float(os.getenv("PPOCR_TIMEOUT", "10"))
+            timeout = float(os.getenv("PPOCR_TIMEOUT", "20"))
         return float(timeout)
 
     @staticmethod

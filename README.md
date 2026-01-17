@@ -55,7 +55,7 @@ Optional:
 - `PPOCR_BASE_URL`: PPOCR base URL (default: `http://10.0.22.109:8001`).
 - `PPOCR_ENDPOINT`: PPOCR path (default: `/ocr`).
 - `PPOCR_REQUEST_FORMAT`: `auto`/`multipart`/`json` (default: `auto`).
-- `PPOCR_TIMEOUT`: request timeout seconds (default: `10`).
+- `PPOCR_TIMEOUT`: request timeout seconds (default: `20`).
 - `PPOCR_FILE_FIELD`: multipart file field name (default: `file`).
 - `PPOCR_IMAGE_PATH`: default image path for PPOCR API tests/requests.
 
@@ -73,7 +73,7 @@ PPOCR_USE_GPU=0
 PPOCR_BASE_URL=http://10.0.22.109:8001
 PPOCR_ENDPOINT=/ocr
 PPOCR_REQUEST_FORMAT=auto
-PPOCR_TIMEOUT=10
+PPOCR_TIMEOUT=20
 PPOCR_FILE_FIELD=file
 # PPOCR_URL=http://10.0.22.109:8001/ocr
 # PPOCR_IMAGE_PATH=data/source/sample.png

@@ -58,7 +58,7 @@ class TestPPOCRApi(unittest.TestCase):
         cls.endpoint = os.getenv("PPOCR_ENDPOINT", "/ocr")
         cls.url = os.getenv("PPOCR_URL") or cls._build_url(cls.base_url, cls.endpoint)
         cls.request_format = os.getenv("PPOCR_REQUEST_FORMAT", "auto").lower()
-        cls.timeout = float(os.getenv("PPOCR_TIMEOUT", "10"))
+        cls.timeout = float(os.getenv("PPOCR_TIMEOUT", "20"))
         cls.file_field = os.getenv("PPOCR_FILE_FIELD", "file")
         cls.output_dir = Path(os.getenv("PPOCR_OUTPUT_DIR", "ppocr_results"))
         cls.output_dir.mkdir(parents=True, exist_ok=True)
