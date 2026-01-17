@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 import numpy as np
@@ -325,7 +326,10 @@ def _extract_text_from_file(
     if suffix == ".pdf":
         pages = LocalPPOCRTool._extract_pdf_text(path)
         if pages is None:
+            start = time.perf_counter()
             pages = ocr.get().ocr_pdf(path, image_dpi=image_dpi)
+            duration = time.perf_counter() - start
+            logger.info("OCR processed %s in %.2fs", path, duration)
         text = _join_pages(pages)
         return _docs_from_text(path, text, use_page_markers=True, force_page=True), text
     if suffix == ".docx":
@@ -338,7 +342,10 @@ def _extract_text_from_file(
         text = _normalize_text(_read_text_with_fallback(path))
         return _docs_from_text(path, text), text
     if suffix in (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"):
+        start = time.perf_counter()
         lines = ocr.get().ocr_image_path(path)
+        duration = time.perf_counter() - start
+        logger.info("OCR processed %s in %.2fs", path, duration)
         text = _normalize_text("\n".join(lines))
         return _docs_from_text(path, text), text
     if suffix == ".doc":

@@ -1,9 +1,19 @@
 from __future__ import annotations
 
+import base64
 from io import BytesIO
+import json
+import mimetypes
 import os
 from pathlib import Path
 from typing import Iterable
+from urllib import error, request
+
+
+_DEFAULT_PNG_BASE64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMA"
+    "ASsJTYQAAAAASUVORK5CYII="
+)
 
 
 class PdfImageTool:
@@ -79,6 +89,55 @@ class LocalPPOCRTool:
         result = self._ocr.ocr(image, cls=True)
         return self._extract_texts(result)
 
+    @staticmethod
+    def ocr_image_bytes_remote(
+        image_bytes: bytes | None = None,
+        *,
+        image_path: Path | None = None,
+        filename: str | None = None,
+        url: str | None = None,
+        base_url: str | None = None,
+        endpoint: str | None = None,
+        request_format: str | None = None,
+        timeout: float | None = None,
+        file_field: str | None = None,
+    ) -> dict | list:
+        image_bytes, filename = LocalPPOCRTool._resolve_remote_image(
+            image_bytes, image_path, filename
+        )
+        url = LocalPPOCRTool._resolve_remote_url(url, base_url, endpoint)
+        request_format = LocalPPOCRTool._resolve_request_format(request_format)
+        timeout_value = LocalPPOCRTool._resolve_timeout(timeout)
+        file_field = LocalPPOCRTool._resolve_file_field(file_field)
+
+        errors: list[str] = []
+
+        if request_format in ("auto", "multipart"):
+            status, body, err = LocalPPOCRTool._post_multipart(
+                url, image_bytes, filename, file_field, timeout_value
+            )
+            parsed = LocalPPOCRTool._parse_json(body) if body else None
+            if LocalPPOCRTool._is_success(status, parsed):
+                return parsed
+            errors.append(
+                f"multipart {LocalPPOCRTool._format_error(status, err, body)}"
+            )
+
+        if request_format in ("auto", "json"):
+            for payload in LocalPPOCRTool._json_payloads(image_bytes):
+                status, body, err = LocalPPOCRTool._post_json(
+                    url, payload, timeout_value
+                )
+                parsed = LocalPPOCRTool._parse_json(body) if body else None
+                if LocalPPOCRTool._is_success(status, parsed):
+                    return parsed
+                errors.append(
+                    f"json {LocalPPOCRTool._format_error(status, err, body)}"
+                )
+
+        error_details = "\n".join(errors) if errors else "No response"
+        raise RuntimeError(f"PPOCR request failed. url={url}\n{error_details}")
+
     def ocr_image_path(self, image_path: Path) -> list[str]:
         image_path = Path(image_path)
         if not image_path.exists():
@@ -116,6 +175,178 @@ class LocalPPOCRTool:
         if image is None:
             raise ValueError("Failed to decode image bytes.")
         return image
+
+    @staticmethod
+    def _resolve_remote_image(
+        image_bytes: bytes | None,
+        image_path: Path | None,
+        filename: str | None,
+    ) -> tuple[bytes, str]:
+        if image_path is None:
+            env_path = os.getenv("PPOCR_IMAGE_PATH")
+            if env_path:
+                image_path = Path(env_path)
+        if image_path is not None:
+            image_path = Path(image_path)
+            if not image_path.exists():
+                raise FileNotFoundError(f"PPOCR image not found: {image_path}")
+            image_bytes = image_path.read_bytes()
+            filename = filename or image_path.name
+        if image_bytes is None:
+            image_bytes = base64.b64decode(_DEFAULT_PNG_BASE64)
+        if not filename:
+            filename = "inline.png"
+        return image_bytes, filename
+
+    @staticmethod
+    def _resolve_remote_url(
+        url: str | None,
+        base_url: str | None,
+        endpoint: str | None,
+    ) -> str:
+        if url:
+            return url
+        env_url = os.getenv("PPOCR_URL")
+        if env_url:
+            return env_url
+        if base_url is None:
+            base_url = os.getenv("PPOCR_BASE_URL", "http://10.0.22.109:8001")
+        if endpoint is None:
+            endpoint = os.getenv("PPOCR_ENDPOINT", "/ocr")
+        base_url = base_url.rstrip("/")
+        return LocalPPOCRTool._build_url(base_url, endpoint)
+
+    @staticmethod
+    def _build_url(base_url: str, endpoint: str) -> str:
+        if not endpoint:
+            return base_url
+        if not endpoint.startswith("/"):
+            endpoint = f"/{endpoint}"
+        return f"{base_url}{endpoint}"
+
+    @staticmethod
+    def _resolve_request_format(request_format: str | None) -> str:
+        if request_format is None:
+            request_format = os.getenv("PPOCR_REQUEST_FORMAT", "auto")
+        request_format = request_format.strip().lower()
+        if request_format not in ("auto", "multipart", "json"):
+            return "auto"
+        return request_format
+
+    @staticmethod
+    def _resolve_timeout(timeout: float | None) -> float:
+        if timeout is None:
+            timeout = float(os.getenv("PPOCR_TIMEOUT", "10"))
+        return float(timeout)
+
+    @staticmethod
+    def _resolve_file_field(file_field: str | None) -> str:
+        if not file_field:
+            return os.getenv("PPOCR_FILE_FIELD", "file")
+        return file_field
+
+    @staticmethod
+    def _post_json(url: str, payload: dict, timeout: float):
+        body = json.dumps(payload).encode("utf-8")
+        req = request.Request(
+            url,
+            data=body,
+            headers={"Content-Type": "application/json"},
+        )
+        return LocalPPOCRTool._send_request(req, timeout)
+
+    @staticmethod
+    def _post_multipart(
+        url: str,
+        image_bytes: bytes,
+        filename: str,
+        file_field: str,
+        timeout: float,
+    ):
+        boundary = f"----ppocrboundary{os.urandom(8).hex()}"
+        mime = "image/png"
+        guess, _ = mimetypes.guess_type(filename)
+        if guess:
+            mime = guess
+        header = (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="{file_field}"; '
+            f'filename="{filename}"\r\n'
+            f"Content-Type: {mime}\r\n\r\n"
+        ).encode("utf-8")
+        footer = f"\r\n--{boundary}--\r\n".encode("utf-8")
+        body = header + image_bytes + footer
+
+        req = request.Request(
+            url,
+            data=body,
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        )
+        return LocalPPOCRTool._send_request(req, timeout)
+
+    @staticmethod
+    def _send_request(req, timeout: float):
+        try:
+            with request.urlopen(req, timeout=timeout) as resp:
+                return resp.status, resp.read(), None
+        except error.HTTPError as exc:
+            return exc.code, exc.read(), exc
+        except error.URLError as exc:
+            return None, None, exc
+
+    @staticmethod
+    def _json_payloads(image_bytes: bytes) -> list[dict]:
+        encoded = base64.b64encode(image_bytes).decode("ascii")
+        data_url = f"data:image/png;base64,{encoded}"
+        return [
+            {"images": [encoded]},
+            {"images": [data_url]},
+            {"image": encoded},
+            {"image": data_url},
+        ]
+
+    @staticmethod
+    def _parse_json(body: bytes):
+        if not body:
+            return None
+        try:
+            return json.loads(body.decode("utf-8"))
+        except json.JSONDecodeError:
+            return None
+
+    @staticmethod
+    def _body_preview(body: bytes, limit: int = 2000) -> str:
+        if not body:
+            return "<empty>"
+        text = body.decode("utf-8", errors="replace")
+        if len(text) > limit:
+            return f"{text[:limit]}...[truncated]"
+        return text
+
+    @staticmethod
+    def _looks_successful(parsed) -> bool:
+        if parsed is None:
+            return False
+        if isinstance(parsed, dict):
+            error_code = parsed.get("error_code")
+            if error_code not in (None, 0, "0"):
+                return False
+            if parsed.get("error"):
+                return False
+        return True
+
+    @staticmethod
+    def _is_success(status: int | None, parsed) -> bool:
+        return (
+            status is not None
+            and 200 <= status < 300
+            and LocalPPOCRTool._looks_successful(parsed)
+        )
+
+    @staticmethod
+    def _format_error(status: int | None, err, body: bytes | None) -> str:
+        preview = LocalPPOCRTool._body_preview(body or b"")
+        return f"status={status} err={err} body={preview}"
 
     @staticmethod
     def _is_line_item(item) -> bool:

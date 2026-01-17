@@ -157,7 +157,7 @@ def main() -> None:
         raw_docs, persist_dir, processed_dir, force_rebuild=args.rebuild
     )
 
-    model = os.getenv("GOOGLE_MODEL", "gemini-1.5-flash")
+    model = os.getenv("GOOGLE_MODEL", "gemini-2.5-flash")
     llm = ChatGoogleGenerativeAI(model=model, temperature=0)
 
     question = args.question or os.getenv("QUESTION") or "投标人基本情况是什么，联系人是谁，联系方式是什么？"
