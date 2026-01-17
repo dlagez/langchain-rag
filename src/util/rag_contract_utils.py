@@ -10,6 +10,7 @@ from langchain_core.documents import Document
 from qdrant_client.http.models import FieldCondition, Filter, MatchValue
 
 from .contract_attachment_selector import ContractAttachmentSelector
+from .contract_chunker import ContractChunker
 from .document_utils import _doc_signature, _format_source
 from .keyword_utils import _extract_source_hint
 
@@ -634,3 +635,23 @@ def _assign_chunk_ids(docs: list[Document]) -> list[Document]:
         doc.metadata["chunk_id"] = counters[key]
         counters[key] += 1
     return docs
+
+
+def _chunk_documents_for_index(
+    docs: list[Document],
+    chunk_size: int,
+    chunk_overlap: int,
+) -> list[Document]:
+    contract_min = max(200, int(chunk_size * 0.5))
+    contract_max = chunk_size
+    overlap = max(0, chunk_overlap)
+    checklist_max = min(600, contract_max)
+    checklist_min = min(200, checklist_max)
+    chunker = ContractChunker(
+        contract_min=contract_min,
+        contract_max=contract_max,
+        overlap=overlap,
+        checklist_min=checklist_min,
+        checklist_max=checklist_max,
+    )
+    return chunker.chunk_documents(docs)

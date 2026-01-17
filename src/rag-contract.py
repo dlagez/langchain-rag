@@ -16,6 +16,7 @@ from util.rag_contract_utils import (
     _build_contract_documents,
     _build_keyword_query,
     _build_retrieval_query,
+    _chunk_documents_for_index,
     _collect_source_names,
     _filter_docs_and_scores_by_scope,
     _filter_docs_by_scope,
@@ -187,7 +188,15 @@ def get_vectorstore(
     )
     manifest["collection_name"] = collection_name
     manifest["qdrant_location"] = qdrant_location
-    manifest["ingestion_schema"] = "contract_approval_v2"
+    manifest["ingestion_schema"] = "contract_approval_v3"
+    manifest["chunking_strategy"] = "structured_v1"
+    manifest["chunking_params"] = {
+        "contract_min": max(200, int(chunk_size * 0.5)),
+        "contract_max": chunk_size,
+        "overlap": chunk_overlap,
+        "checklist_min": min(200, min(600, chunk_size)),
+        "checklist_max": min(600, chunk_size),
+    }
 
     client = _get_qdrant_client(persist_dir)
 
@@ -200,7 +209,10 @@ def get_vectorstore(
             return client, collection_name, embeddings
 
     # 分块、向量化并写入向量库，为分块添加 chunk_id 便于追踪
-    splits = _assign_chunk_ids(docs)
+    chunked_docs = _chunk_documents_for_index(
+        docs, chunk_size=chunk_size, chunk_overlap=chunk_overlap
+    )
+    splits = _assign_chunk_ids(chunked_docs)
     if not splits:
         raise SystemExit("No content left after splitting documents.")
 

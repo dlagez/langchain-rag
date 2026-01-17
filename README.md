@@ -8,7 +8,7 @@ Minimal RAG project skeleton using LangChain + Google Gemini embeddings + Qdrant
 3. Create `.env` with your key: `GOOGLE_API_KEY=...`
 4. (Optional) Set `GOOGLE_MODEL` to a supported model, e.g. `gemini-2.5-flash`
 5. Put source files in `data/source/`
-6. Run: `python src/rag_demo.py "你的问题"`
+6. Run: `python src/rag-contract.py "your question"`
 
 Notes:
 - The vector store persists to `index/`. Delete that folder or use `--rebuild` to rebuild.
@@ -29,12 +29,23 @@ Notes:
 - To enable GPU OCR, install `paddlepaddle-gpu` and set `PPOCR_USE_GPU=1` in `.env`.
 
 ## Source Processing
-`src/rag_demo.py` now reads raw files from `data/source/`, converts them to text,
+`src/rag-contract.py` reads raw files from `data/source/`, converts them to text,
 and writes the processed output into `data/processed/`.
 These two folders are the default input/output locations for the processing tools.
 
 Supported types:
 - `txt`, `pdf`, `docx`, `doc` (via textract/Word/LibreOffice), `xls`, `xlsx`, `csv`, common images
+
+## Chunking strategy
+Structured chunking is applied before indexing:
+- Contract-like attachments are split by chapter/section/article headings when possible,
+  with length-based fallback using overlap.
+- Checklist-like attachments are grouped by item lines (denser, shorter chunks).
+- Signature pages are isolated when signature keywords are detected.
+
+Key knobs:
+- `RAG_CHUNK_SIZE` sets the target max chunk length for contract-style text.
+- `RAG_CHUNK_OVERLAP` is used when length-based splitting is required.
 
 ## Environment variables
 Required:
@@ -43,13 +54,16 @@ Required:
 Optional:
 - `GOOGLE_MODEL`: chat model name (default: `gemini-2.5-flash`).
 - `GOOGLE_EMBEDDING_MODEL`: embedding model name (default: `text-embedding-004`).
-- `RAG_CHUNK_SIZE`: chunk size (default: `800`).
-- `RAG_CHUNK_OVERLAP`: chunk overlap (default: `100`).
+- `RAG_CHUNK_SIZE`: target max chunk length for structured chunking (default: `800`).
+- `RAG_CHUNK_OVERLAP`: overlap used for length-based splits (default: `100`).
 - `RAG_ALPHA`: hybrid retrieval mix (default: `0.7`).
 - `QDRANT_PATH`: local Qdrant storage path (default: `index/qdrant`).
 - `QDRANT_COLLECTION`: collection name for vectors (default: `rag_docs`).
 - `QDRANT_URL`: connect to a Qdrant server instead of local mode.
 - `QDRANT_API_KEY`: API key for Qdrant server.
+- `QUESTION`: default prompt text when no CLI question is provided.
+- `PROCESS_ID` / `RAG_PROCESS_ID`: process instance ID for metadata filtering.
+- `RAG_CREATED_AT` / `CREATED_AT`: optional created_at metadata value.
 - `PPOCR_USE_GPU`: set to `1` to enable GPU OCR when supported (default: off).
 - `PPOCR_URL`: full PPOCR endpoint URL (default: built from base + endpoint).
 - `PPOCR_BASE_URL`: PPOCR base URL (default: `http://10.0.22.109:8001`).
@@ -71,6 +85,8 @@ RAG_CHUNK_OVERLAP=100
 RAG_ALPHA=0.7
 QDRANT_PATH=index/qdrant
 QDRANT_COLLECTION=rag_docs
+QUESTION="What is the VAT rate stated in the contract?\nOnly use values explicitly present."
+PROCESS_ID=your_process_id
 PPOCR_USE_GPU=0
 PPOCR_BASE_URL=http://10.0.22.109:8001
 PPOCR_ENDPOINT=/ocr
