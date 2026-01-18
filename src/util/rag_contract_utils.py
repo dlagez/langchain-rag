@@ -344,7 +344,14 @@ def _infer_source_scope(
         if prefix is None:
             prefix = "附件"
 
-    if raw_docs is not None and "合同" in prompt:
+    if raw_docs is not None and "合同" in prompt and prefix != _FORM_PREFIX:
+        contract_name_candidates = [
+            name
+            for name in source_names
+            if name.startswith(_ATTACHMENT_PREFIX) and "合同" in name
+        ]
+        if contract_name_candidates:
+            return SourceScope(names=tuple(contract_name_candidates))
         selector = ContractAttachmentSelector()
         contract_names = selector.select_contract_names(raw_docs, top_k=1)
         if contract_names:

@@ -21,7 +21,6 @@ from util.rag_contract_utils import (
     _filter_docs_and_scores_by_scope,
     _filter_docs_by_scope,
     _format_source_scope,
-    _infer_source_scope,
     _match_source_names,
     _merge_docs_with_retriever,
     _regex_attachment_fallback,
@@ -188,7 +187,7 @@ def get_vectorstore(
     )
     manifest["collection_name"] = collection_name
     manifest["qdrant_location"] = qdrant_location
-    manifest["ingestion_schema"] = "contract_approval_v3"
+    manifest["ingestion_schema"] = "contract_approval_v4_attachment_only"
     manifest["chunking_strategy"] = "structured_v1"
     manifest["chunking_params"] = {
         "contract_min": max(200, int(chunk_size * 0.5)),
@@ -266,7 +265,7 @@ def main() -> None:
     # 解析源文件（含 OCR）并构建结构化文档
     ocr_tool = _LazyOCR()
     # OCR + 文本抽取 -> 原始文档切分
-    raw_docs = process_sources(
+    raw_source_docs = process_sources(
         source_dir, processed_dir, ocr_tool, image_dpi=args.image_dpi
     )
     process_id = (
@@ -276,8 +275,8 @@ def main() -> None:
     )
     created_at = os.getenv("RAG_CREATED_AT") or os.getenv("CREATED_AT")
     # 表单/附件结构化处理，补充元数据
-    raw_docs, inferred_process_id = _build_contract_documents(
-        raw_docs,
+    structured_docs, inferred_process_id = _build_contract_documents(
+        raw_source_docs,
         source_dir,
         process_id=process_id,
         created_at=created_at,
@@ -286,82 +285,159 @@ def main() -> None:
         logging.warning(
             "process_id is missing; set PROCESS_ID or --process-id for filtering."
         )
-    # 构建或加载向量索引
+    attachment_docs = [
+        doc
+        for doc in structured_docs
+        if (doc.metadata or {}).get("source_type") == "attachment"
+    ]
+    # 构建或加载向量索引（仅附件）
     client, collection_name, embedder = get_vectorstore(
-        raw_docs, persist_dir, processed_dir, force_rebuild=args.rebuild
+        attachment_docs, persist_dir, processed_dir, force_rebuild=args.rebuild
     )
 
     # 初始化 LLM
     model = os.getenv("GOOGLE_MODEL", "gemini-2.5-flash")
     llm = ChatGoogleGenerativeAI(model=model, temperature=0)
 
-    question = args.question or os.getenv("QUESTION") or "hello"
-    question = question.strip()
-    if not question:
+    form_question = os.getenv("RAG_FORM_QUESTION", "").strip()
+    attachment_question = os.getenv("RAG_ATTACHMENT_QUESTION", "").strip()
+    compare_question = os.getenv("RAG_COMPARE_QUESTION", "").strip()
+    missing = []
+    if not form_question:
+        missing.append("RAG_FORM_QUESTION")
+    if not attachment_question:
+        missing.append("RAG_ATTACHMENT_QUESTION")
+    if not compare_question:
+        missing.append("RAG_COMPARE_QUESTION")
+    if missing:
+        logging.error(
+            "Missing required env vars: %s", ", ".join(missing)
+        )
         return
 
     alpha = float(os.getenv("RAG_ALPHA", "0.7"))
-    # 解析问题，生成检索/关键词查询并确定检索范围
-    retrieval_query = _build_retrieval_query(question)
-    keyword_query = _build_keyword_query(question, retrieval_query)
-    source_names = _collect_source_names(raw_docs)
-    source_scope = _infer_source_scope(question, source_names, raw_docs)
-    print(f"Retrieval query:\n {retrieval_query}")
-    if keyword_query != retrieval_query:
-        print(f"Keyword query:\n {keyword_query}")
-    # 打印检索范围，便于排查召回问题
-    if source_scope.is_active():
-        print(f"Retrieval scope: {_format_source_scope(source_scope)}")
-        matched_files = _match_source_names(source_scope, source_names)
-        if matched_files:
-            print("Scope files:")
-            for name in matched_files[:20]:
-                print("-", name)
-        else:
-            print("Scope files: <none>")
-            print("No files matched the retrieval scope; aborting search.")
-            return
-    # 检索召回并生成上下文
-    # 核心召回：融合向量 + 关键词/正则回退
-    docs, strategy = retrieve_documents(
-        retrieval_query,
-        client,
-        collection_name,
-        raw_docs,
-        embedder,
-        k=args.k,
-        fetch_k=args.fetch_k,
-        alpha=alpha,
-        source_scope=source_scope,
-        keyword_query=keyword_query,
-    )
-
-    if not docs:
-        print("No relevant documents found.")
-        return
-
-    # 拼接上下文并调用 LLM 生成答案
-    context = _format_context(docs)
-    # 构造提示词并请求模型回答
-    prompt = (
-        "Use the following context to answer the question. "
-        "If the answer is not in the context, say you do not know.\n\n"
-        f"{context}\n\nQuestion: {question}\nAnswer:"
-    )
+    source_names = _collect_source_names(attachment_docs)
     prompt_dir = root / "data" / "prompt"
     prompt_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    prompt_path = prompt_dir / f"prompt_{timestamp}.txt"
-    prompt_path.write_text(prompt, encoding="utf-8")
-    response = llm.invoke(prompt)
 
-    print(f"Question: {question}")
-    print(f"Prompt saved to {prompt_path}")
-    print("Answer:\n", _response_text(response.content))
-    print(f"\nRetrieval: {strategy}")
-    print("\nSources:")
-    for source in _unique_sources_with_retriever(docs):
-        print("-", source)
+    def _save_prompt(label: str, prompt: str, answer: str) -> Path:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        prompt_path = prompt_dir / f"prompt_{timestamp}_{label}.txt"
+        payload = f"{prompt}\n\n---\nAnswer:\n{answer}"
+        prompt_path.write_text(payload, encoding="utf-8")
+        return prompt_path
+
+    def _run_extraction(
+        label: str,
+        question: str,
+        scope: SourceScope,
+        *,
+        direct_docs: list[Document] | None = None,
+    ) -> str:
+        if direct_docs is not None:
+            docs = _tag_retriever(direct_docs, f"direct:{label}")
+            if not docs:
+                print(f"[{label}] No direct documents found.")
+                return ""
+            context = _format_context(docs)
+            prompt = (
+                "Use the following context to answer the question. "
+                "If the answer is not in the context, say you do not know.\n\n"
+                f"{context}\n\nQuestion: {question}\nAnswer:"
+            )
+            response = llm.invoke(prompt)
+            answer_text = _response_text(response.content)
+            prompt_path = _save_prompt(label, prompt, answer_text)
+            print(f"[{label}] Question: {question}")
+            print(f"[{label}] Prompt saved to {prompt_path}")
+            print(f"[{label}] Answer:\n {answer_text}")
+            print(f"[{label}] Retrieval: direct")
+            print(f"[{label}] Sources:")
+            for source in _unique_sources_with_retriever(docs):
+                print("-", source)
+            return answer_text
+
+        retrieval_query = _build_retrieval_query(question)
+        keyword_query = _build_keyword_query(question, retrieval_query)
+        print(f"[{label}] Retrieval query:\n {retrieval_query}")
+        if keyword_query != retrieval_query:
+            print(f"[{label}] Keyword query:\n {keyword_query}")
+        if scope.is_active():
+            print(
+                f"[{label}] Retrieval scope: {_format_source_scope(scope)}"
+            )
+            matched_files = _match_source_names(scope, source_names)
+            if matched_files:
+                print(f"[{label}] Scope files:")
+                for name in matched_files[:20]:
+                    print("-", name)
+            else:
+                print(f"[{label}] Scope files: <none>")
+                print(
+                    f"[{label}] No files matched the retrieval scope; aborting search."
+                )
+                return ""
+
+        docs, strategy = retrieve_documents(
+            retrieval_query,
+            client,
+            collection_name,
+            attachment_docs,
+            embedder,
+            k=args.k,
+            fetch_k=args.fetch_k,
+            alpha=alpha,
+            source_scope=scope,
+            keyword_query=keyword_query,
+        )
+
+        if not docs:
+            print(f"[{label}] No relevant documents found.")
+            return ""
+
+        context = _format_context(docs)
+        prompt = (
+            "Use the following context to answer the question. "
+            "If the answer is not in the context, say you do not know.\n\n"
+            f"{context}\n\nQuestion: {question}\nAnswer:"
+        )
+        response = llm.invoke(prompt)
+        answer_text = _response_text(response.content)
+        prompt_path = _save_prompt(label, prompt, answer_text)
+
+        print(f"[{label}] Question: {question}")
+        print(f"[{label}] Prompt saved to {prompt_path}")
+        print(f"[{label}] Answer:\n {answer_text}")
+        print(f"[{label}] Retrieval: {strategy}")
+        print(f"[{label}] Sources:")
+        for source in _unique_sources_with_retriever(docs):
+            print("-", source)
+        return answer_text
+
+    form_scope = SourceScope(prefix="表单")
+    attachment_scope = SourceScope(prefix="附件", include_terms=("合同",))
+
+    form_direct_docs = _filter_docs_by_scope(raw_source_docs, form_scope)
+    form_answer = _run_extraction(
+        "form", form_question, form_scope, direct_docs=form_direct_docs
+    )
+    attachment_answer = _run_extraction(
+        "attachment", attachment_question, attachment_scope
+    )
+
+    compare_prompt = (
+        "Use the following extracted information to answer the question. "
+        "If the answer is not in the extracted information, say you do not know.\n\n"
+        f"Form extraction:\n{form_answer or '<none>'}\n\n"
+        f"Attachment extraction:\n{attachment_answer or '<none>'}\n\n"
+        f"Question: {compare_question}\nAnswer:"
+    )
+    compare_response = llm.invoke(compare_prompt)
+    compare_answer = _response_text(compare_response.content)
+    compare_prompt_path = _save_prompt("compare", compare_prompt, compare_answer)
+    print(f"[compare] Question: {compare_question}")
+    print(f"[compare] Prompt saved to {compare_prompt_path}")
+    print(f"[compare] Answer:\n {compare_answer}")
 
 
 if __name__ == "__main__":
