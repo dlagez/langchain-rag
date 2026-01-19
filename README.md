@@ -1,18 +1,38 @@
 # LangChain RAG Starter
 
-Minimal RAG project skeleton using LangChain + Google Gemini embeddings + Qdrant.
+Minimal RAG project skeleton using LangChain + Google Gemini or Alibaba Bailian
+(DashScope) embeddings + Qdrant.
 
 ## Quickstart (PowerShell)
 1. Activate venv: `.\.venv\Scripts\Activate.ps1`
 2. Install deps: `python -m pip install -r requirements.txt`
-3. Create `.env` with your key: `GOOGLE_API_KEY=...`
-4. (Optional) Set `GOOGLE_MODEL` to a supported model, e.g. `gemini-2.5-flash`
+3. Create `.env` with your key (Google: `GOOGLE_API_KEY=...` or Bailian:
+   `BAILIAN_API_KEY=...` + `RAG_PROVIDER=bailian`)
+4. (Optional) Set your model (`GOOGLE_MODEL` or `BAILIAN_MODEL`)
 5. Put source files in `data/source/`
 6. Run: `python src/rag-contract.py "your question"`
 
 Notes:
 - The vector store persists to `index/`. Delete that folder or use `--rebuild` to rebuild.
 - Processed text outputs are written to `data/processed/`.
+
+## Provider switching
+Set `RAG_PROVIDER` to select a default for both the LLM and embeddings.
+Use `RAG_LLM_PROVIDER` or `RAG_EMBEDDING_PROVIDER` to override either one.
+
+Example (Bailian):
+```bash
+RAG_PROVIDER=bailian
+BAILIAN_API_KEY=your_key_here
+BAILIAN_MODEL=qwen-plus
+BAILIAN_EMBEDDING_MODEL=text-embedding-v2
+```
+
+Example (mix providers):
+```bash
+RAG_LLM_PROVIDER=bailian
+RAG_EMBEDDING_PROVIDER=google
+```
 
 ## Qdrant (local)
 The vector store uses Qdrant in local mode by default, persisted under `index/qdrant`.
@@ -65,12 +85,22 @@ Key knobs:
 - `RAG_CHUNK_OVERLAP` is used when length-based splitting is required.
 
 ## Environment variables
-Required:
+Required (choose provider):
 - `GOOGLE_API_KEY`: Gemini Developer API key.
+- `BAILIAN_API_KEY` / `DASHSCOPE_API_KEY`: Alibaba Bailian API key.
 
 Optional:
+- `RAG_PROVIDER`: default provider for LLM + embeddings (`google`/`bailian`).
+- `RAG_LLM_PROVIDER`: override LLM provider (`google`/`bailian`).
+- `RAG_EMBEDDING_PROVIDER`: override embeddings provider (`google`/`bailian`).
+- `RAG_LOG_LEVEL`: application log level (default: `INFO`).
+- `RAG_LOG_REQUESTS`: set to `1` to save provider request logs (currently Bailian, includes request URL).
+- `RAG_LOG_DIR`: directory to save full request logs (default: `data/log`).
 - `GOOGLE_MODEL`: chat model name (default: `gemini-2.5-flash`).
 - `GOOGLE_EMBEDDING_MODEL`: embedding model name (default: `text-embedding-004`).
+- `BAILIAN_MODEL`: chat model name (default: `qwen-plus`).
+- `BAILIAN_EMBEDDING_MODEL`: embedding model name (default: `text-embedding-v2`).
+- `DASHSCOPE_MODEL` / `DASHSCOPE_EMBEDDING_MODEL`: aliases for Bailian models.
 - `RAG_CHUNK_SIZE`: target max chunk length for structured chunking (default: `800`).
 - `RAG_CHUNK_OVERLAP`: overlap used for length-based splits (default: `100`).
 - `RAG_ALPHA`: hybrid retrieval mix (default: `0.7`).
@@ -91,7 +121,7 @@ Optional:
 - `PPOCR_IMAGE_PATH`: default image path for PPOCR API tests/requests.
 - `PPOCR_MODE`: OCR backend (`local`/`remote`/`auto`, default: `local`).
 
-Copy-ready example:
+Copy-ready example (Google):
 ```bash
 GOOGLE_API_KEY=your_key_here
 GOOGLE_MODEL=gemini-2.5-flash

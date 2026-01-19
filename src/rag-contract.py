@@ -4,12 +4,14 @@ import argparse
 from datetime import datetime
 import logging
 import os
-import numpy as np
 from pathlib import Path
+import threading
+from typing import Any
 
+import numpy as np
 from dotenv import load_dotenv
 from langchain_core.documents import Document
-from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
+from langchain_core.embeddings import Embeddings
 from util.rag_contract_utils import (
     SourceScope,
     _assign_chunk_ids,
@@ -49,13 +51,244 @@ from util.util import (
     process_sources,
 )
 
+_PROVIDER_ALIASES = {
+    "alibaba": "bailian",
+    "aliyun": "bailian",
+    "bailian": "bailian",
+    "dashscope": "bailian",
+    "tongyi": "bailian",
+    "qwen": "bailian",
+    "gemini": "google",
+    "genai": "google",
+    "google": "google",
+    "google-genai": "google",
+}
+
+_DASHSCOPE_HTTP_PATCHED = False
+_REQUEST_LOG_COUNTER = 0
+_REQUEST_LOG_LOCK = threading.Lock()
+_REQUEST_LOG_STATE = threading.local()
+
+
+def _normalize_provider(value: str | None) -> str:
+    if not value:
+        return ""
+    normalized = value.strip().lower()
+    return _PROVIDER_ALIASES.get(normalized, normalized)
+
+
+def _resolve_provider(
+    env_key: str, fallback_key: str | None, default: str
+) -> str:
+    value = os.getenv(env_key)
+    if not value and fallback_key:
+        value = os.getenv(fallback_key)
+    normalized = _normalize_provider(value)
+    return normalized or default
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _request_log_dir() -> Path:
+    raw = os.getenv("RAG_LOG_DIR", "data/log")
+    path = Path(raw)
+    if not path.is_absolute():
+        path = Path(__file__).resolve().parents[1] / path
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _next_request_log_path() -> Path:
+    global _REQUEST_LOG_COUNTER
+    with _REQUEST_LOG_LOCK:
+        _REQUEST_LOG_COUNTER += 1
+        counter = _REQUEST_LOG_COUNTER
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    return _request_log_dir() / f"request_{timestamp}_{counter}.txt"
+
+
+def _append_request_log(label: str, payload: str) -> None:
+    if not _env_flag("RAG_LOG_REQUESTS"):
+        return
+    path = getattr(_REQUEST_LOG_STATE, "path", None)
+    if label == "Request url":
+        path = _next_request_log_path()
+        _REQUEST_LOG_STATE.path = path
+    if path is None:
+        path = _next_request_log_path()
+        _REQUEST_LOG_STATE.path = path
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(f"{label}: {payload}\n")
+
+
+class _DashscopeLogFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        for prefix in ("Request url: ", "Request body: ", "Response: "):
+            if message.startswith(prefix):
+                body = message[len(prefix) :].strip()
+                _append_request_log(prefix.strip(": "), body)
+                return False
+        return True
+
+
+def _using_bailian() -> bool:
+    embedding_provider = _resolve_provider(
+        "RAG_EMBEDDING_PROVIDER", "RAG_PROVIDER", ""
+    )
+    llm_provider = _resolve_provider("RAG_LLM_PROVIDER", "RAG_PROVIDER", "")
+    return embedding_provider == "bailian" or llm_provider == "bailian"
+
+
+def _configure_request_logging() -> None:
+    log_requests = _env_flag("RAG_LOG_REQUESTS")
+    if _using_bailian():
+        if log_requests:
+            _patch_bailian_http_logging()
+        logger = logging.getLogger("dashscope")
+        logger.addFilter(_DashscopeLogFilter())
+        for handler in list(logger.handlers):
+            logger.removeHandler(handler)
+        logger.setLevel(logging.DEBUG if log_requests else logging.INFO)
+        logger.propagate = True
+
+
+def _patch_bailian_http_logging() -> None:
+    global _DASHSCOPE_HTTP_PATCHED
+    if _DASHSCOPE_HTTP_PATCHED:
+        return
+    try:
+        from dashscope.api_entities import http_request as _dashscope_http
+    except Exception:
+        return
+
+    original = _dashscope_http.HttpRequest._handle_request
+
+    def _handle_request_with_logging(self):
+        logging.getLogger("dashscope").debug("Request url: %s", self.url)
+        return original(self)
+
+    _dashscope_http.HttpRequest._handle_request = _handle_request_with_logging
+    _DASHSCOPE_HTTP_PATCHED = True
+
+
+def _configure_logging() -> None:
+    level_name = os.getenv("RAG_LOG_LEVEL", "INFO").upper()
+    level = logging._nameToLevel.get(level_name, logging.INFO)
+    logging.basicConfig(level=level, format="%(levelname)s: %(message)s")
+    _configure_request_logging()
+
+
+def _bailian_api_key() -> str:
+    api_key = os.getenv("BAILIAN_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
+    if not api_key:
+        raise SystemExit(
+            "Bailian API key missing. Set BAILIAN_API_KEY or DASHSCOPE_API_KEY."
+        )
+    return api_key
+
+
+def _build_google_embeddings(model: str) -> Embeddings:
+    try:
+        from langchain_google_genai import GoogleGenerativeAIEmbeddings
+    except Exception as exc:
+        raise SystemExit(
+            "Google embeddings require langchain-google-genai."
+        ) from exc
+    return GoogleGenerativeAIEmbeddings(model=model)
+
+
+def _build_google_llm(model: str, temperature: float = 0) -> Any:
+    try:
+        from langchain_google_genai import ChatGoogleGenerativeAI
+    except Exception as exc:
+        raise SystemExit(
+            "Google LLM requires langchain-google-genai."
+        ) from exc
+    return ChatGoogleGenerativeAI(model=model, temperature=temperature)
+
+
+def _build_bailian_embeddings(model: str) -> Embeddings:
+    api_key = _bailian_api_key()
+    try:
+        from langchain_community.embeddings import DashScopeEmbeddings
+    except Exception as exc:
+        raise SystemExit(
+            "Bailian embeddings require langchain-community and dashscope."
+        ) from exc
+    return DashScopeEmbeddings(model=model, dashscope_api_key=api_key)
+
+
+def _build_bailian_llm(model: str) -> Any:
+    api_key = _bailian_api_key()
+    try:
+        from langchain_community.chat_models import ChatTongyi
+    except Exception as exc:
+        raise SystemExit(
+            "Bailian LLM requires langchain-community and dashscope."
+        ) from exc
+    return ChatTongyi(model=model, api_key=api_key)
+
+
+def _resolve_embedding_config() -> tuple[str, str]:
+    provider = _resolve_provider(
+        "RAG_EMBEDDING_PROVIDER", "RAG_PROVIDER", "google"
+    )
+    if provider == "google":
+        model = os.getenv("GOOGLE_EMBEDDING_MODEL", "text-embedding-004")
+        return provider, model
+    if provider == "bailian":
+        model = (
+            os.getenv("BAILIAN_EMBEDDING_MODEL")
+            or os.getenv("DASHSCOPE_EMBEDDING_MODEL")
+            or "text-embedding-v2"
+        )
+        return provider, model
+    raise SystemExit(f"Unsupported embedding provider: {provider}")
+
+
+def _resolve_llm_config() -> tuple[str, str]:
+    provider = _resolve_provider("RAG_LLM_PROVIDER", "RAG_PROVIDER", "google")
+    if provider == "google":
+        model = os.getenv("GOOGLE_MODEL", "gemini-2.5-flash")
+        return provider, model
+    if provider == "bailian":
+        model = (
+            os.getenv("BAILIAN_MODEL")
+            or os.getenv("DASHSCOPE_MODEL")
+            or "qwen-plus"
+        )
+        return provider, model
+    raise SystemExit(f"Unsupported LLM provider: {provider}")
+
+
+def _build_embeddings(provider: str, model: str) -> Embeddings:
+    if provider == "google":
+        return _build_google_embeddings(model)
+    if provider == "bailian":
+        return _build_bailian_embeddings(model)
+    raise SystemExit(f"Unsupported embedding provider: {provider}")
+
+
+def _build_llm(provider: str, model: str) -> Any:
+    if provider == "google":
+        return _build_google_llm(model, temperature=0)
+    if provider == "bailian":
+        return _build_bailian_llm(model)
+    raise SystemExit(f"Unsupported LLM provider: {provider}")
+
 
 def retrieve_documents(
     query: str,
     client,
     collection_name: str,
     raw_docs: list[Document],
-    embedder: GoogleGenerativeAIEmbeddings,
+    embedder: Embeddings,
     k: int = 6,
     fetch_k: int = 24,
     alpha: float = 0.7,
@@ -166,25 +399,29 @@ def get_vectorstore(
     persist_dir: Path,
     processed_dir: Path,
     force_rebuild: bool = False,
+    embedding_provider: str | None = None,
+    embedding_model: str | None = None,
 ):
     """
     根据文档构建/复用向量库：生成索引清单、检查缓存一致性，
     必要时重建集合并写入向量，最终返回 client/collection/embeddings。
     """
-    embedding_model = os.getenv("GOOGLE_EMBEDDING_MODEL", "text-embedding-004")
+    if not embedding_provider or not embedding_model:
+        embedding_provider, embedding_model = _resolve_embedding_config()
     chunk_size = int(os.getenv("RAG_CHUNK_SIZE", "800"))
     # 理论上用于文本分块时的重叠长度，保证相邻 chunk 之间有上下文衔接（减少边界信息丢失）
     chunk_overlap = int(os.getenv("RAG_CHUNK_OVERLAP", "100"))
     collection_name = os.getenv("QDRANT_COLLECTION", "contract_approval_rag")
     qdrant_location = _qdrant_location(persist_dir)
 
-    embeddings = GoogleGenerativeAIEmbeddings(model=embedding_model)
+    embeddings = _build_embeddings(embedding_provider, embedding_model)
     # 生成“索引清单（manifest）”，用来判断能不能复用已建好的向量库，避免每次都重建。
     # collection_name、qdrant_location、ingestion_schema：记录这次索引用的集合名、存储位置、以及你的自定义版本号/结构标识。
     # 后面会把这份 manifest 和磁盘上已有的 manifest 对比；如果一致，就直接复用现有向量库，不重建。
     manifest = _build_index_manifest(
         processed_dir, embedding_model, chunk_size, chunk_overlap
     )
+    manifest["embedding_provider"] = embedding_provider
     manifest["collection_name"] = collection_name
     manifest["qdrant_location"] = qdrant_location
     manifest["ingestion_schema"] = "contract_approval_v4_attachment_only"
@@ -254,7 +491,7 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> None:
     load_dotenv()
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    _configure_logging()
     args = _parse_args()
 
     root = Path(__file__).resolve().parents[1]
@@ -291,13 +528,23 @@ def main() -> None:
         if (doc.metadata or {}).get("source_type") == "attachment"
     ]
     # 构建或加载向量索引（仅附件）
+    embedding_provider, embedding_model = _resolve_embedding_config()
     client, collection_name, embedder = get_vectorstore(
-        attachment_docs, persist_dir, processed_dir, force_rebuild=args.rebuild
+        attachment_docs,
+        persist_dir,
+        processed_dir,
+        force_rebuild=args.rebuild,
+        embedding_provider=embedding_provider,
+        embedding_model=embedding_model,
+    )
+    logging.info(
+        "Embedding provider: %s (%s)", embedding_provider, embedding_model
     )
 
     # 初始化 LLM
-    model = os.getenv("GOOGLE_MODEL", "gemini-2.5-flash")
-    llm = ChatGoogleGenerativeAI(model=model, temperature=0)
+    llm_provider, llm_model = _resolve_llm_config()
+    llm = _build_llm(llm_provider, llm_model)
+    logging.info("LLM provider: %s (%s)", llm_provider, llm_model)
 
     form_question = os.getenv("RAG_FORM_QUESTION", "").strip()
     attachment_question = os.getenv("RAG_ATTACHMENT_QUESTION", "").strip()

@@ -2,6 +2,7 @@ langchain==1.2.4
 langchain-community==0.4.1
 langchain-google-genai==4.2.0
 langchain-text-splitters==1.1.0
+dashscope==1.25.8
 numpy==1.26.4
 opencv-python==4.10.0.84
 pandas==2.2.2
