@@ -14,6 +14,13 @@ from .contract_chunker import ContractChunker
 from util.document_utils import _doc_signature, _format_source
 from util.keyword_utils import _extract_source_hint
 
+# 合同 RAG 的领域工具集，把原始文档整理、过滤、分块、召回标签等“合同业务逻辑”集中在这里。主要职责：
+# 来源范围控制：SourceScope + _infer_source_scope/_filter_docs_by_scope/_filter_docs_and_scores_by_scope，按“表单/附件/文件名/关键词”等限定检索范围
+# 召回结果标注与合并：_tag_retriever/_merge_docs_with_retriever/_unique_sources_with_retriever，给 doc 打上召回来源、合并去重
+# 附件/表单结构化：_build_contract_documents，把原始文本转为结构化 Document（字段、段落、页码、source_type 等）
+# 正则兜底检索：_regex_attachment_fallback，基于关键词正则从附件文本里兜底召回
+# 索引分块与ID：_chunk_documents_for_index、_assign_chunk_ids 用合同分块策略切片并打 chunk_id
+# 检索过滤：_source_type_filter 生成 Qdrant 的过滤条件
 
 def _source_type_filter(source_type: str) -> Filter:
     return Filter(

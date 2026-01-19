@@ -6,6 +6,11 @@ import re
 
 from langchain_core.documents import Document
 
+# 合同领域的分块器，专门把 OCR/抽取后的合同相关文档切成更适合检索/向量化的片段。核心作用：
+# 根据文件名/内容判断文档类型：合同正文、检查清单、其它
+# 按中文合同结构（章/条/节）、表格行、句子长度等规则切分
+# 对签署页、清单项等做特殊处理
+# 生成带有元数据的 Document（例如 doc_type_hint、chunk_type、page、has_signature 等）
 
 _CONTRACT_NAME_HINTS = (
     "建设工程施工合同",

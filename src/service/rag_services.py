@@ -26,6 +26,13 @@ from util.util import (
     _upsert_documents,
 )
 
+
+# 是RAG 服务层的基础服务，负责初始化模型、配置日志、构建/加载向量索引等“运行支撑逻辑”。核心作用：
+# 模型与提供商配置：解析环境变量，统一 google / bailian 的 provider 与模型名（resolve_embedding_config / resolve_llm_config）
+# 构建 Embeddings / LLM：根据 provider 构造对应的 LangChain 实例（_build_*, build_llm）
+# 日志与请求记录：配置日志级别、可选记录请求内容，兼容 DashScope/百炼 SDK 的日志过滤
+# 向量库构建/复用：build_or_load_vectorstore 里做分块、嵌入、Qdrant collection 创建/复用、manifest 校验等
+
 _PROVIDER_ALIASES = {
     "alibaba": "bailian",
     "aliyun": "bailian",
