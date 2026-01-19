@@ -5,20 +5,20 @@ from datetime import datetime
 import logging
 import os
 from pathlib import Path
-import threading
-from typing import Any
 
-import numpy as np
 from dotenv import load_dotenv
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
-from util.rag_contract_utils import (
+from service.rag_services import (
+    build_llm,
+    build_or_load_vectorstore,
+    configure_logging,
+    resolve_embedding_config,
+    resolve_llm_config,
+)
+from domain.contract.rag_contract_utils import (
     SourceScope,
-    _assign_chunk_ids,
     _build_contract_documents,
-    _build_keyword_query,
-    _build_retrieval_query,
-    _chunk_documents_for_index,
     _collect_source_names,
     _filter_docs_and_scores_by_scope,
     _filter_docs_by_scope,
@@ -31,257 +31,16 @@ from util.rag_contract_utils import (
     _unique_sources_with_retriever,
 )
 from util.util import (
-    _build_index_manifest,
-    _collection_exists,
     _docs_from_search_results,
     _docs_have_keyword_hits,
     _format_context,
-    _get_qdrant_client,
     _hybrid_rerank,
     _keyword_fallback,
     _LazyOCR,
-    _load_manifest,
-    _manifest_matches,
-    _qdrant_location,
-    _recreate_collection,
     _response_text,
-    _save_manifest,
     _search_qdrant,
-    _upsert_documents,
     process_sources,
 )
-
-_PROVIDER_ALIASES = {
-    "alibaba": "bailian",
-    "aliyun": "bailian",
-    "bailian": "bailian",
-    "dashscope": "bailian",
-    "tongyi": "bailian",
-    "qwen": "bailian",
-    "gemini": "google",
-    "genai": "google",
-    "google": "google",
-    "google-genai": "google",
-}
-
-_DASHSCOPE_HTTP_PATCHED = False
-_REQUEST_LOG_COUNTER = 0
-_REQUEST_LOG_LOCK = threading.Lock()
-_REQUEST_LOG_STATE = threading.local()
-
-
-def _normalize_provider(value: str | None) -> str:
-    if not value:
-        return ""
-    normalized = value.strip().lower()
-    return _PROVIDER_ALIASES.get(normalized, normalized)
-
-
-def _resolve_provider(
-    env_key: str, fallback_key: str | None, default: str
-) -> str:
-    value = os.getenv(env_key)
-    if not value and fallback_key:
-        value = os.getenv(fallback_key)
-    normalized = _normalize_provider(value)
-    return normalized or default
-
-
-def _env_flag(name: str, default: bool = False) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _request_log_dir() -> Path:
-    raw = os.getenv("RAG_LOG_DIR", "data/log")
-    path = Path(raw)
-    if not path.is_absolute():
-        path = Path(__file__).resolve().parents[1] / path
-    path.mkdir(parents=True, exist_ok=True)
-    return path
-
-
-def _next_request_log_path() -> Path:
-    global _REQUEST_LOG_COUNTER
-    with _REQUEST_LOG_LOCK:
-        _REQUEST_LOG_COUNTER += 1
-        counter = _REQUEST_LOG_COUNTER
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    return _request_log_dir() / f"request_{timestamp}_{counter}.txt"
-
-
-def _append_request_log(label: str, payload: str) -> None:
-    if not _env_flag("RAG_LOG_REQUESTS"):
-        return
-    path = getattr(_REQUEST_LOG_STATE, "path", None)
-    if label == "Request url":
-        path = _next_request_log_path()
-        _REQUEST_LOG_STATE.path = path
-    if path is None:
-        path = _next_request_log_path()
-        _REQUEST_LOG_STATE.path = path
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(f"{label}: {payload}\n")
-
-
-class _DashscopeLogFilter(logging.Filter):
-    def filter(self, record: logging.LogRecord) -> bool:
-        message = record.getMessage()
-        for prefix in ("Request url: ", "Request body: ", "Response: "):
-            if message.startswith(prefix):
-                body = message[len(prefix) :].strip()
-                _append_request_log(prefix.strip(": "), body)
-                return False
-        return True
-
-
-def _using_bailian() -> bool:
-    embedding_provider = _resolve_provider(
-        "RAG_EMBEDDING_PROVIDER", "RAG_PROVIDER", ""
-    )
-    llm_provider = _resolve_provider("RAG_LLM_PROVIDER", "RAG_PROVIDER", "")
-    return embedding_provider == "bailian" or llm_provider == "bailian"
-
-
-def _configure_request_logging() -> None:
-    log_requests = _env_flag("RAG_LOG_REQUESTS")
-    if _using_bailian():
-        if log_requests:
-            _patch_bailian_http_logging()
-        logger = logging.getLogger("dashscope")
-        logger.addFilter(_DashscopeLogFilter())
-        for handler in list(logger.handlers):
-            logger.removeHandler(handler)
-        logger.setLevel(logging.DEBUG if log_requests else logging.INFO)
-        logger.propagate = True
-
-
-def _patch_bailian_http_logging() -> None:
-    global _DASHSCOPE_HTTP_PATCHED
-    if _DASHSCOPE_HTTP_PATCHED:
-        return
-    try:
-        from dashscope.api_entities import http_request as _dashscope_http
-    except Exception:
-        return
-
-    original = _dashscope_http.HttpRequest._handle_request
-
-    def _handle_request_with_logging(self):
-        logging.getLogger("dashscope").debug("Request url: %s", self.url)
-        return original(self)
-
-    _dashscope_http.HttpRequest._handle_request = _handle_request_with_logging
-    _DASHSCOPE_HTTP_PATCHED = True
-
-
-def _configure_logging() -> None:
-    level_name = os.getenv("RAG_LOG_LEVEL", "INFO").upper()
-    level = logging._nameToLevel.get(level_name, logging.INFO)
-    logging.basicConfig(level=level, format="%(levelname)s: %(message)s")
-    _configure_request_logging()
-
-
-def _bailian_api_key() -> str:
-    api_key = os.getenv("BAILIAN_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
-    if not api_key:
-        raise SystemExit(
-            "Bailian API key missing. Set BAILIAN_API_KEY or DASHSCOPE_API_KEY."
-        )
-    return api_key
-
-
-def _build_google_embeddings(model: str) -> Embeddings:
-    try:
-        from langchain_google_genai import GoogleGenerativeAIEmbeddings
-    except Exception as exc:
-        raise SystemExit(
-            "Google embeddings require langchain-google-genai."
-        ) from exc
-    return GoogleGenerativeAIEmbeddings(model=model)
-
-
-def _build_google_llm(model: str, temperature: float = 0) -> Any:
-    try:
-        from langchain_google_genai import ChatGoogleGenerativeAI
-    except Exception as exc:
-        raise SystemExit(
-            "Google LLM requires langchain-google-genai."
-        ) from exc
-    return ChatGoogleGenerativeAI(model=model, temperature=temperature)
-
-
-def _build_bailian_embeddings(model: str) -> Embeddings:
-    api_key = _bailian_api_key()
-    try:
-        from langchain_community.embeddings import DashScopeEmbeddings
-    except Exception as exc:
-        raise SystemExit(
-            "Bailian embeddings require langchain-community and dashscope."
-        ) from exc
-    return DashScopeEmbeddings(model=model, dashscope_api_key=api_key)
-
-
-def _build_bailian_llm(model: str) -> Any:
-    api_key = _bailian_api_key()
-    try:
-        from langchain_community.chat_models import ChatTongyi
-    except Exception as exc:
-        raise SystemExit(
-            "Bailian LLM requires langchain-community and dashscope."
-        ) from exc
-    return ChatTongyi(model=model, api_key=api_key)
-
-
-def _resolve_embedding_config() -> tuple[str, str]:
-    provider = _resolve_provider(
-        "RAG_EMBEDDING_PROVIDER", "RAG_PROVIDER", "google"
-    )
-    if provider == "google":
-        model = os.getenv("GOOGLE_EMBEDDING_MODEL", "text-embedding-004")
-        return provider, model
-    if provider == "bailian":
-        model = (
-            os.getenv("BAILIAN_EMBEDDING_MODEL")
-            or os.getenv("DASHSCOPE_EMBEDDING_MODEL")
-            or "text-embedding-v2"
-        )
-        return provider, model
-    raise SystemExit(f"Unsupported embedding provider: {provider}")
-
-
-def _resolve_llm_config() -> tuple[str, str]:
-    provider = _resolve_provider("RAG_LLM_PROVIDER", "RAG_PROVIDER", "google")
-    if provider == "google":
-        model = os.getenv("GOOGLE_MODEL", "gemini-2.5-flash")
-        return provider, model
-    if provider == "bailian":
-        model = (
-            os.getenv("BAILIAN_MODEL")
-            or os.getenv("DASHSCOPE_MODEL")
-            or "qwen-plus"
-        )
-        return provider, model
-    raise SystemExit(f"Unsupported LLM provider: {provider}")
-
-
-def _build_embeddings(provider: str, model: str) -> Embeddings:
-    if provider == "google":
-        return _build_google_embeddings(model)
-    if provider == "bailian":
-        return _build_bailian_embeddings(model)
-    raise SystemExit(f"Unsupported embedding provider: {provider}")
-
-
-def _build_llm(provider: str, model: str) -> Any:
-    if provider == "google":
-        return _build_google_llm(model, temperature=0)
-    if provider == "bailian":
-        return _build_bailian_llm(model)
-    raise SystemExit(f"Unsupported LLM provider: {provider}")
-
 
 def retrieve_documents(
     query: str,
@@ -305,17 +64,7 @@ def retrieve_documents(
     fetch_k = max(fetch_k, k)
     # 兜底召回使用原始文档（先做范围过滤，减少无关文本）
     fallback_docs = _filter_docs_by_scope(raw_docs, source_scope)
-    # 向量检索：分别对表单与附件进行召回
     query_vec = embedder.embed_query(query)
-    # 表单类向量检索
-    form_results = _search_qdrant(
-        client,
-        collection_name,
-        query_vec,
-        limit=fetch_k,
-        query_filter=_source_type_filter("form"),
-    )
-    # 附件类向量检索
     attachment_results = _search_qdrant(
         client,
         collection_name,
@@ -323,25 +72,13 @@ def retrieve_documents(
         limit=fetch_k,
         query_filter=_source_type_filter("attachment"),
     )
-    form_docs, form_scores = _docs_from_search_results(form_results)
     attachment_docs, attachment_scores = _docs_from_search_results(
         attachment_results
     )
-    # 标记召回来源，便于调试
-    form_docs = _tag_retriever(form_docs, "vector:form")
     attachment_docs = _tag_retriever(attachment_docs, "vector:attachment")
-    print(
-        f"Retrievers: form={len(form_docs)}, attachment={len(attachment_docs)}"
-    )
-    # 合并不同来源的候选文档
-    docs = form_docs + attachment_docs
-    if form_scores.size == 0:
-        vector_scores = attachment_scores
-    elif attachment_scores.size == 0:
-        vector_scores = form_scores
-    else:
-        vector_scores = np.concatenate([form_scores, attachment_scores])
-    # 按检索范围过滤候选与分数
+    print(f"Retrievers: attachment={len(attachment_docs)}")
+    docs = attachment_docs
+    vector_scores = attachment_scores
     docs, vector_scores = _filter_docs_and_scores_by_scope(
         docs, vector_scores, source_scope
     )
@@ -394,76 +131,6 @@ def retrieve_documents(
     return docs, "hybrid"
 
 
-def get_vectorstore(
-    docs: list[Document],
-    persist_dir: Path,
-    processed_dir: Path,
-    force_rebuild: bool = False,
-    embedding_provider: str | None = None,
-    embedding_model: str | None = None,
-):
-    """
-    根据文档构建/复用向量库：生成索引清单、检查缓存一致性，
-    必要时重建集合并写入向量，最终返回 client/collection/embeddings。
-    """
-    if not embedding_provider or not embedding_model:
-        embedding_provider, embedding_model = _resolve_embedding_config()
-    chunk_size = int(os.getenv("RAG_CHUNK_SIZE", "800"))
-    # 理论上用于文本分块时的重叠长度，保证相邻 chunk 之间有上下文衔接（减少边界信息丢失）
-    chunk_overlap = int(os.getenv("RAG_CHUNK_OVERLAP", "100"))
-    collection_name = os.getenv("QDRANT_COLLECTION", "contract_approval_rag")
-    qdrant_location = _qdrant_location(persist_dir)
-
-    embeddings = _build_embeddings(embedding_provider, embedding_model)
-    # 生成“索引清单（manifest）”，用来判断能不能复用已建好的向量库，避免每次都重建。
-    # collection_name、qdrant_location、ingestion_schema：记录这次索引用的集合名、存储位置、以及你的自定义版本号/结构标识。
-    # 后面会把这份 manifest 和磁盘上已有的 manifest 对比；如果一致，就直接复用现有向量库，不重建。
-    manifest = _build_index_manifest(
-        processed_dir, embedding_model, chunk_size, chunk_overlap
-    )
-    manifest["embedding_provider"] = embedding_provider
-    manifest["collection_name"] = collection_name
-    manifest["qdrant_location"] = qdrant_location
-    manifest["ingestion_schema"] = "contract_approval_v4_attachment_only"
-    manifest["chunking_strategy"] = "structured_v1"
-    manifest["chunking_params"] = {
-        "contract_min": max(200, int(chunk_size * 0.5)),
-        "contract_max": chunk_size,
-        "overlap": chunk_overlap,
-        "checklist_min": min(200, min(600, chunk_size)),
-        "checklist_max": min(600, chunk_size),
-    }
-
-    client = _get_qdrant_client(persist_dir)
-
-    # 若索引配置与缓存一致，直接复用已有向量库
-    if not force_rebuild:
-        stored_manifest = _load_manifest(persist_dir)
-        if _manifest_matches(stored_manifest, manifest) and _collection_exists(
-            client, collection_name
-        ):
-            return client, collection_name, embeddings
-
-    # 分块、向量化并写入向量库，为分块添加 chunk_id 便于追踪
-    chunked_docs = _chunk_documents_for_index(
-        docs, chunk_size=chunk_size, chunk_overlap=chunk_overlap
-    )
-    splits = _assign_chunk_ids(chunked_docs)
-    if not splits:
-        raise SystemExit("No content left after splitting documents.")
-
-    # 向量化并写入向量库
-    vectors = embeddings.embed_documents([doc.page_content for doc in splits])
-    if not vectors:
-        raise SystemExit("Embedding model returned no vectors.")
-    vector_size = len(vectors[0])
-    # 重建向量集合并写入
-    _recreate_collection(client, collection_name, vector_size)
-    _upsert_documents(client, collection_name, splits, vectors)
-    _save_manifest(persist_dir, manifest, doc_count=len(splits))
-    return client, collection_name, embeddings
-
-
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="RAG demo")
     parser.add_argument("question", nargs="?", help="Question to ask.")
@@ -491,7 +158,7 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> None:
     load_dotenv()
-    _configure_logging()
+    configure_logging()
     args = _parse_args()
 
     root = Path(__file__).resolve().parents[1]
@@ -528,8 +195,8 @@ def main() -> None:
         if (doc.metadata or {}).get("source_type") == "attachment"
     ]
     # 构建或加载向量索引（仅附件）
-    embedding_provider, embedding_model = _resolve_embedding_config()
-    client, collection_name, embedder = get_vectorstore(
+    embedding_provider, embedding_model = resolve_embedding_config()
+    client, collection_name, embedder = build_or_load_vectorstore(
         attachment_docs,
         persist_dir,
         processed_dir,
@@ -542,8 +209,8 @@ def main() -> None:
     )
 
     # 初始化 LLM
-    llm_provider, llm_model = _resolve_llm_config()
-    llm = _build_llm(llm_provider, llm_model)
+    llm_provider, llm_model = resolve_llm_config()
+    llm = build_llm(llm_provider, llm_model)
     logging.info("LLM provider: %s (%s)", llm_provider, llm_model)
 
     form_question = os.getenv("RAG_FORM_QUESTION", "").strip()
@@ -604,11 +271,6 @@ def main() -> None:
                 print("-", source)
             return answer_text
 
-        retrieval_query = _build_retrieval_query(question)
-        keyword_query = _build_keyword_query(question, retrieval_query)
-        print(f"[{label}] Retrieval query:\n {retrieval_query}")
-        if keyword_query != retrieval_query:
-            print(f"[{label}] Keyword query:\n {keyword_query}")
         if scope.is_active():
             print(
                 f"[{label}] Retrieval scope: {_format_source_scope(scope)}"
@@ -626,7 +288,7 @@ def main() -> None:
                 return ""
 
         docs, strategy = retrieve_documents(
-            retrieval_query,
+            question,
             client,
             collection_name,
             attachment_docs,
@@ -635,7 +297,6 @@ def main() -> None:
             fetch_k=args.fetch_k,
             alpha=alpha,
             source_scope=scope,
-            keyword_query=keyword_query,
         )
 
         if not docs:

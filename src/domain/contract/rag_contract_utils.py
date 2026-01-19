@@ -11,8 +11,8 @@ from qdrant_client.http.models import FieldCondition, Filter, MatchValue
 
 from .contract_attachment_selector import ContractAttachmentSelector
 from .contract_chunker import ContractChunker
-from .document_utils import _doc_signature, _format_source
-from .keyword_utils import _extract_source_hint
+from util.document_utils import _doc_signature, _format_source
+from util.keyword_utils import _extract_source_hint
 
 
 def _source_type_filter(source_type: str) -> Filter:
@@ -171,22 +171,6 @@ def _regex_attachment_fallback(
     return [doc for _, doc in scored[:limit]]
 
 
-_QUESTION_WORDS = ("什么", "多少", "几", "如何", "是否", "哪里", "哪", "谁")
-_DOMAIN_HINTS = ("增值税", "税率", "计税", "征收率", "发票", "项目计税类型")
-_RULE_MARKERS = ("规则", "不得", "仅", "若", "否则", "返回", "输出", "识别")
-_IGNORE_LINE_RE = re.compile(r"^\s*(\d+[\.\)]|[-*•])\s*")
-_IGNORE_STARTS = ("你是", "你的任务", "请严格", "注意", "说明")
-_KEYWORD_HINTS = (
-    "增值税税率",
-    "税率",
-    "征收率",
-    "计税方法",
-    "一般计税",
-    "简易计算",
-    "增值税专用发票",
-    "增值税普通发票",
-)
-
 _FORM_PREFIX = "表单"
 _ATTACHMENT_PREFIX = "附件"
 _FORM_FIELD_MAX_LEN = 28
@@ -228,67 +212,6 @@ class SourceScope:
 
     def is_active(self) -> bool:
         return bool(self.names or self.prefix or self.include_terms or self.exclude_terms)
-
-
-def _is_rule_like(line: str) -> bool:
-    if _IGNORE_LINE_RE.match(line):
-        return True
-    if any(line.startswith(prefix) for prefix in _IGNORE_STARTS):
-        return True
-    if any(marker in line for marker in _RULE_MARKERS) and not line.endswith(("?", "？")):
-        return True
-    return False
-
-
-def _build_retrieval_query(prompt: str) -> str:
-    lines = [line.strip() for line in prompt.splitlines() if line.strip()]
-    if not lines:
-        return prompt.strip()
-
-    candidates: list[str] = []
-    for line in lines:
-        if _is_rule_like(line):
-            continue
-        if line.endswith(("?", "？")) or any(word in line for word in _QUESTION_WORDS):
-            candidates.append(line)
-            continue
-        if any(hint in line for hint in _DOMAIN_HINTS) and len(line) <= 80:
-            candidates.append(line)
-
-    if candidates:
-        seen = set()
-        deduped = []
-        for line in candidates:
-            if line not in seen:
-                seen.add(line)
-                deduped.append(line)
-        return " ".join(deduped[:3])
-
-    return lines[-1]
-
-
-def _extract_prompt_keywords(prompt: str) -> list[str]:
-    matches: list[str] = []
-    for hint in _KEYWORD_HINTS:
-        if hint in prompt:
-            matches.append(hint)
-    for hint in _DOMAIN_HINTS:
-        if hint in prompt and hint not in matches:
-            matches.append(hint)
-    for item in re.findall(r"\d{1,2}%|\d{1,2}\s*%", prompt):
-        token = item.replace(" ", "")
-        if token not in matches:
-            matches.append(token)
-    return matches
-
-
-def _build_keyword_query(prompt: str, base_query: str) -> str:
-    keywords = _extract_prompt_keywords(prompt)
-    if not keywords:
-        return base_query
-    combined = [base_query] if base_query else []
-    combined.extend(keywords[:8])
-    return " ".join(combined)
 
 
 def _collect_source_names(raw_docs: list[Document]) -> list[str]:
