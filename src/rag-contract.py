@@ -42,6 +42,7 @@ from util.util import (
     process_sources,
 )
 
+
 def retrieve_documents(
     query: str,
     client,
@@ -165,6 +166,8 @@ def main() -> None:
     source_dir = root / "data" / "source"
     processed_dir = root / "data" / "processed"
     persist_dir = root / "index"
+    embedding_provider, embedding_model = resolve_embedding_config()
+    llm_provider, llm_model = resolve_llm_config()
 
     # 解析源文件（含 OCR）并构建结构化文档
     ocr_tool = _LazyOCR()
@@ -195,7 +198,6 @@ def main() -> None:
         if (doc.metadata or {}).get("source_type") == "attachment"
     ]
     # 构建或加载向量索引（仅附件）
-    embedding_provider, embedding_model = resolve_embedding_config()
     client, collection_name, embedder = build_or_load_vectorstore(
         attachment_docs,
         persist_dir,
@@ -209,7 +211,6 @@ def main() -> None:
     )
 
     # 初始化 LLM
-    llm_provider, llm_model = resolve_llm_config()
     llm = build_llm(llm_provider, llm_model)
     logging.info("LLM provider: %s (%s)", llm_provider, llm_model)
 
@@ -262,7 +263,6 @@ def main() -> None:
             response = llm.invoke(prompt)
             answer_text = _response_text(response.content)
             prompt_path = _save_prompt(label, prompt, answer_text)
-            print(f"[{label}] Question: {question}")
             print(f"[{label}] Prompt saved to {prompt_path}")
             print(f"[{label}] Answer:\n {answer_text}")
             print(f"[{label}] Retrieval: direct")
@@ -313,7 +313,6 @@ def main() -> None:
         answer_text = _response_text(response.content)
         prompt_path = _save_prompt(label, prompt, answer_text)
 
-        print(f"[{label}] Question: {question}")
         print(f"[{label}] Prompt saved to {prompt_path}")
         print(f"[{label}] Answer:\n {answer_text}")
         print(f"[{label}] Retrieval: {strategy}")
@@ -343,7 +342,6 @@ def main() -> None:
     compare_response = llm.invoke(compare_prompt)
     compare_answer = _response_text(compare_response.content)
     compare_prompt_path = _save_prompt("compare", compare_prompt, compare_answer)
-    print(f"[compare] Question: {compare_question}")
     print(f"[compare] Prompt saved to {compare_prompt_path}")
     print(f"[compare] Answer:\n {compare_answer}")
 

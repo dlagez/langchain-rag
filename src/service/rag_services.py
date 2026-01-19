@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import threading
+import urllib.error
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -44,6 +47,8 @@ _PROVIDER_ALIASES = {
     "genai": "google",
     "google": "google",
     "google-genai": "google",
+    "local": "local",
+    "vllm": "local",
 }
 
 _DASHSCOPE_HTTP_PATCHED = False
@@ -217,6 +222,96 @@ def _build_bailian_llm(model: str) -> Any:
     return ChatTongyi(model=model, api_key=api_key)
 
 
+class _HttpEmbeddings(Embeddings):
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        model: str,
+        api_key: str | None = None,
+        timeout: float = 30.0,
+    ) -> None:
+        self._url = self._normalize_url(base_url)
+        self._model = model
+        self._api_key = api_key
+        self._timeout = timeout
+
+    @staticmethod
+    def _normalize_url(base_url: str) -> str:
+        url = base_url.strip().rstrip("/")
+        if not url:
+            raise SystemExit("Embedding base URL is empty.")
+        if url.endswith("/embeddings"):
+            return url
+        return f"{url}/embeddings"
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return self._embed(texts)
+
+    def embed_query(self, text: str) -> list[float]:
+        embeddings = self._embed([text])
+        return embeddings[0] if embeddings else []
+
+    def _embed(self, texts: list[str]) -> list[list[float]]:
+        payload = {"model": self._model, "input": texts}
+        body = json.dumps(payload).encode("utf-8")
+        if _env_flag("RAG_LOG_REQUESTS"):
+            _append_request_log("Request url", self._url)
+            _append_request_log("Request body", body.decode("utf-8", errors="replace"))
+        request = urllib.request.Request(
+            self._url,
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        if self._api_key:
+            request.add_header("Authorization", f"Bearer {self._api_key}")
+        try:
+            with urllib.request.urlopen(request, timeout=self._timeout) as response:
+                status = getattr(response, "status", None)
+                raw = response.read().decode("utf-8", errors="replace")
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise SystemExit(
+                f"Embedding server error ({exc.code}): {detail}"
+            ) from exc
+        except Exception as exc:
+            raise SystemExit(f"Embedding request failed: {exc}") from exc
+
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise SystemExit("Embedding server returned invalid JSON.") from exc
+
+        data = parsed.get("data")
+        if not isinstance(data, list):
+            raise SystemExit("Embedding response missing data list.")
+        indexed: list[tuple[int, list[float]]] = []
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            embedding = item.get("embedding")
+            if embedding is None:
+                continue
+            index = item.get("index")
+            if not isinstance(index, int):
+                index = len(indexed)
+            indexed.append((index, embedding))
+        if _env_flag("RAG_LOG_REQUESTS"):
+            dims = len(indexed[0][1]) if indexed else 0
+            status_label = status if status is not None else "unknown"
+            _append_request_log(
+                "Response",
+                f"status={status_label}, embeddings={len(indexed)}, dims={dims}",
+            )
+        if len(indexed) != len(texts):
+            raise SystemExit(
+                f"Embedding server returned {len(indexed)} embeddings for {len(texts)} inputs."
+            )
+        indexed.sort(key=lambda pair: pair[0])
+        return [item[1] for item in indexed]
+
+
 def resolve_embedding_config() -> tuple[str, str]:
     provider = _resolve_provider(
         "RAG_EMBEDDING_PROVIDER", "RAG_PROVIDER", "google"
@@ -230,6 +325,15 @@ def resolve_embedding_config() -> tuple[str, str]:
             or os.getenv("DASHSCOPE_EMBEDDING_MODEL")
             or "text-embedding-v2"
         )
+        return provider, model
+    if provider == "local":
+        model = os.getenv("LOCAL_EMBEDDING_MODEL") or os.getenv(
+            "VLLM_EMBEDDING_MODEL"
+        )
+        if not model:
+            raise SystemExit(
+                "Local embedding model missing. Set LOCAL_EMBEDDING_MODEL."
+            )
         return provider, model
     raise SystemExit(f"Unsupported embedding provider: {provider}")
 
@@ -254,6 +358,20 @@ def _build_embeddings(provider: str, model: str) -> Embeddings:
         return _build_google_embeddings(model)
     if provider == "bailian":
         return _build_bailian_embeddings(model)
+    if provider == "local":
+        base_url = os.getenv("LOCAL_EMBEDDING_BASE_URL") or os.getenv(
+            "VLLM_EMBEDDING_BASE_URL", "http://127.0.0.1:8002/v1"
+        )
+        api_key = os.getenv("LOCAL_EMBEDDING_API_KEY") or os.getenv(
+            "VLLM_EMBEDDING_API_KEY"
+        )
+        timeout = float(os.getenv("LOCAL_EMBEDDING_TIMEOUT", "30"))
+        return _HttpEmbeddings(
+            base_url=base_url,
+            model=model,
+            api_key=api_key,
+            timeout=timeout,
+        )
     raise SystemExit(f"Unsupported embedding provider: {provider}")
 
 
