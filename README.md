@@ -9,7 +9,8 @@ Minimal RAG project skeleton using LangChain + Google Gemini or Alibaba Bailian
 3. Create `.env` with your key (Google: `GOOGLE_API_KEY=...` or Bailian:
    `BAILIAN_API_KEY=...` + `RAG_PROVIDER=bailian`)
 4. (Optional) Set your model (`GOOGLE_MODEL` or `BAILIAN_MODEL`)
-5. Put source files in `data/source/`
+5. Put source files in `data/source/<process_id>/form/` and
+   `data/source/<process_id>/attachment/`
 6. Run: `python src/rag-contract.py "your question"`
 
 Notes:
@@ -45,11 +46,22 @@ Data is stored in a single Qdrant collection (name from `QDRANT_COLLECTION`, def
 Payload shape:
 - `page_content`: chunk text
 - `metadata`: fields like `source`, `doc_id`, `source_type`, `field`, `page`,
-  `chunk_id`, `doc_type_hint`, `chunk_type`, `process_id`, `created_at`, `filename`
+  `chunk_id`, `doc_type_hint`, `process_id`, `created_at`, `filename`
 
 To inspect stored chunks directly (no re-chunking), use:
 ```bash
 python tests/inspect_chunks.py --limit 5 --max-chars 400
+```
+More examples:
+```bash
+# filter by source filename
+python tests/inspect_chunks.py --source-contains 合同 --limit 3 --max-chars 0
+
+# filter by exact doc_id
+python tests/inspect_chunks.py --doc-id "attachment/合同文件.pdf" --limit 3 --max-chars 0
+
+# filter by doc_id substring
+python tests/inspect_chunks.py --doc-id-contains "合同12.12.pdf" --limit 3 --max-chars 0
 ```
 
 Notes:
@@ -66,9 +78,21 @@ Notes:
 - To enable GPU OCR, install `paddlepaddle-gpu` and set `PPOCR_USE_GPU=1` in `.env`.
 
 ## Source Processing
-`src/rag-contract.py` reads raw files from `data/source/`, converts them to text,
+`src/rag-contract.py` reads raw files from `data/source/<process_id>/form|attachment`
+(files under `data/source/` root are ignored),
+converts them to text,
 and writes the processed output into `data/processed/`.
 These two folders are the default input/output locations for the processing tools.
+
+Directory layout:
+```
+data/source/
+  <process_id>/
+    form/
+      ...
+    attachment/
+      ...
+```
 
 Supported types:
 - `txt`, `pdf`, `docx`, `doc` (via textract/Word/LibreOffice), `xls`, `xlsx`, `csv`, common images
@@ -93,6 +117,8 @@ Optional:
 - `RAG_PROVIDER`: default provider for LLM + embeddings (`google`/`bailian`).
 - `RAG_LLM_PROVIDER`: override LLM provider (`google`/`bailian`).
 - `RAG_EMBEDDING_PROVIDER`: override embeddings provider (`google`/`bailian`).
+- `RAG_FORM_RETRIEVAL_QUERY`: retrieval-only query for form extraction (falls back to `RAG_FORM_QUESTION`).
+- `RAG_ATTACHMENT_RETRIEVAL_QUERY`: retrieval-only query for attachment extraction (falls back to `RAG_ATTACHMENT_QUESTION`).
 - `RAG_LOG_LEVEL`: application log level (default: `INFO`).
 - `RAG_LOG_REQUESTS`: set to `1` to save provider request logs (currently Bailian, includes request URL).
 - `RAG_LOG_DIR`: directory to save full request logs (default: `data/log`).
@@ -109,7 +135,7 @@ Optional:
 - `QDRANT_URL`: connect to a Qdrant server instead of local mode.
 - `QDRANT_API_KEY`: API key for Qdrant server.
 - `QUESTION`: default prompt text when no CLI question is provided.
-- `PROCESS_ID` / `RAG_PROCESS_ID`: process instance ID for metadata filtering.
+- `PROCESS_ID` / `RAG_PROCESS_ID`: process instance ID for metadata filtering (required when multiple process folders exist).
 - `RAG_CREATED_AT` / `CREATED_AT`: optional created_at metadata value.
 - `PPOCR_USE_GPU`: set to `1` to enable GPU OCR when supported (default: off).
 - `PPOCR_URL`: full PPOCR endpoint URL (default: built from base + endpoint).

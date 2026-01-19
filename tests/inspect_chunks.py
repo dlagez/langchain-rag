@@ -37,6 +37,14 @@ def _parse_args() -> argparse.Namespace:
         help="Only show chunks whose source filename contains this string.",
     )
     parser.add_argument(
+        "--doc-id-contains",
+        help="Only show chunks whose metadata doc_id contains this string.",
+    )
+    parser.add_argument(
+        "--doc-id",
+        help="Only show chunks whose metadata doc_id matches this string exactly.",
+    )
+    parser.add_argument(
         "--chunk-id",
         type=int,
         help="Only show chunks whose metadata chunk_id matches.",
@@ -70,6 +78,20 @@ def _metadata_matches_chunk_id(metadata: dict, target: int) -> bool:
     return str(value) == str(target)
 
 
+def _metadata_matches_doc_id(
+    metadata: dict, target: str, *, contains: bool
+) -> bool:
+    if "doc_id" not in metadata:
+        return False
+    value = metadata.get("doc_id")
+    if value is None:
+        return False
+    value = str(value)
+    if contains:
+        return target in value
+    return value == target
+
+
 def _parse_point_id(value: str):
     if value is None:
         return None
@@ -96,8 +118,6 @@ def _format_meta(metadata: dict, point_id) -> str:
         parts.append(f"type={md['source_type']}")
     if "doc_type_hint" in md:
         parts.append(f"doc_type={md['doc_type_hint']}")
-    if "chunk_type" in md:
-        parts.append(f"chunk_type={md['chunk_type']}")
     if "field" in md:
         parts.append(f"field={md['field']}")
     if "page" in md:
@@ -166,6 +186,16 @@ def main() -> None:
             if args.chunk_id is not None:
                 if not _metadata_matches_chunk_id(metadata, args.chunk_id):
                     continue
+            if args.doc_id:
+                if not _metadata_matches_doc_id(
+                    metadata, args.doc_id, contains=False
+                ):
+                    continue
+            if args.doc_id_contains:
+                if not _metadata_matches_doc_id(
+                    metadata, args.doc_id_contains, contains=True
+                ):
+                    continue
 
             if args.limit and printed >= args.limit:
                 continue
@@ -227,6 +257,16 @@ def main() -> None:
             if args.chunk_id is not None:
                 if not _metadata_matches_chunk_id(metadata, args.chunk_id):
                     continue
+            if args.doc_id:
+                if not _metadata_matches_doc_id(
+                    metadata, args.doc_id, contains=False
+                ):
+                    continue
+            if args.doc_id_contains:
+                if not _metadata_matches_doc_id(
+                    metadata, args.doc_id_contains, contains=True
+                ):
+                    continue
 
             if args.limit and printed >= args.limit:
                 continue
@@ -265,6 +305,10 @@ if __name__ == "__main__":
 # python tests/inspect_chunks.py --source-contains 合同 --limit 3 --max-chars 0
 # python tests/inspect_chunks.py --chunk-id 0 --max-chars 400
 # python tests/inspect_chunks.py --point-id 100 --collection rag_docs
+# python tests/inspect_chunks.py --doc-id "attachment/高新三路声环境提升工程预留段建设项目工程总承包（EPC）项目合同12.12.pdf" --limit 3 --max-chars 0
+# python tests/inspect_chunks.py --doc-id-contains "合同12.12.pdf" --limit 3 --max-chars 0
+
+
 
 # --source-contains 合同 只看文件名包含“合同”的 chunk
 # --collection your_collection 覆盖 QDRANT_COLLECTION

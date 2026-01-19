@@ -160,13 +160,15 @@ def _regex_attachment_fallback(
         metadata = doc.metadata or {}
         source = metadata.get("source") or ""
         name = Path(source).name
-        source_type = metadata.get("source_type")
-        if source_type != "attachment" and not name.startswith(
-            _ATTACHMENT_PREFIX
-        ):
+        source_type = _normalize_source_type(metadata.get("source_type"))
+        if source_type is None:
+            source_type = _infer_source_category(source)
+        if source_type != "attachment":
             continue
         if source_scope and source_scope.is_active():
-            if not name or not _doc_in_scope(name, source_scope):
+            if not name or not _doc_in_scope(
+                name, source_scope, source_type, metadata, text
+            ):
                 continue
         text = doc.page_content
         if not text:
@@ -178,8 +180,11 @@ def _regex_attachment_fallback(
     return [doc for _, doc in scored[:limit]]
 
 
+
 _FORM_PREFIX = "表单"
 _ATTACHMENT_PREFIX = "附件"
+_FORM_DIR_NAMES = {"表单", "form", "forms"}
+_ATTACHMENT_DIR_NAMES = {"附件", "attachment", "attachments"}
 _FORM_FIELD_MAX_LEN = 28
 _FORM_FIELD_HINTS = (
     "编号",
@@ -278,7 +283,7 @@ def _infer_source_scope(
         contract_name_candidates = [
             name
             for name in source_names
-            if name.startswith(_ATTACHMENT_PREFIX) and "合同" in name
+            if "合同" in name
         ]
         if contract_name_candidates:
             return SourceScope(names=tuple(contract_name_candidates))
@@ -331,16 +336,78 @@ def _format_source_scope(scope: SourceScope) -> str:
     return "; ".join(parts)
 
 
-def _doc_in_scope(name: str, scope: SourceScope) -> bool:
+def _doc_in_scope(
+    name: str,
+    scope: SourceScope,
+    source_type: str | None = None,
+    metadata: dict | None = None,
+    content: str | None = None,
+) -> bool:
     if scope.names and name not in scope.names:
         return False
-    if scope.prefix and not name.startswith(scope.prefix):
+    if scope.prefix:
+        normalized_prefix = _normalize_source_type(scope.prefix)
+        normalized_type = _normalize_source_type(source_type)
+        if normalized_prefix and normalized_type:
+            if normalized_prefix != normalized_type:
+                return False
+        elif not name.startswith(scope.prefix):
+            return False
+    if scope.include_terms and not _include_terms_match(
+        scope.include_terms, name, metadata, content
+    ):
         return False
-    if scope.include_terms and not all(term in name for term in scope.include_terms):
-        return False
-    if scope.exclude_terms and any(term in name for term in scope.exclude_terms):
+    if scope.exclude_terms and _exclude_terms_match(
+        scope.exclude_terms, name, metadata, content
+    ):
         return False
     return True
+
+
+def _include_terms_match(
+    terms: tuple[str, ...],
+    name: str,
+    metadata: dict | None,
+    content: str | None,
+) -> bool:
+    if not terms:
+        return True
+    if name and all(term in name for term in terms):
+        return True
+    if metadata:
+        filename = metadata.get("filename")
+        if isinstance(filename, str) and all(term in filename for term in terms):
+            return True
+        doc_type = metadata.get("doc_type_hint") or metadata.get("doc_type")
+        if doc_type and len(terms) == 1:
+            term = terms[0]
+            if term in {"合同", "contract"} and doc_type == "contract":
+                return True
+            if term in {"清单", "checklist"} and doc_type == "checklist":
+                return True
+    if content and all(term in content for term in terms):
+        return True
+    return False
+
+
+def _exclude_terms_match(
+    terms: tuple[str, ...],
+    name: str,
+    metadata: dict | None,
+    content: str | None,
+) -> bool:
+    if not terms:
+        return False
+    if name and any(term in name for term in terms):
+        return True
+    if metadata:
+        filename = metadata.get("filename")
+        if isinstance(filename, str) and any(term in filename for term in terms):
+            return True
+    if content and any(term in content for term in terms):
+        return True
+    return False
+
 
 
 def _filter_docs_by_scope(
@@ -352,9 +419,15 @@ def _filter_docs_by_scope(
     for doc in docs:
         source = doc.metadata.get("source") or ""
         name = Path(source).name
-        if name and _doc_in_scope(name, scope):
+        source_type = _normalize_source_type(doc.metadata.get("source_type"))
+        if source_type is None:
+            source_type = _infer_source_category(source)
+        if name and _doc_in_scope(
+            name, scope, source_type, doc.metadata, doc.page_content
+        ):
             filtered.append(doc)
     return filtered
+
 
 
 def _filter_docs_and_scores_by_scope(
@@ -368,7 +441,12 @@ def _filter_docs_and_scores_by_scope(
     for idx, doc in enumerate(docs):
         source = doc.metadata.get("source") or ""
         name = Path(source).name
-        if name and _doc_in_scope(name, scope):
+        source_type = _normalize_source_type(doc.metadata.get("source_type"))
+        if source_type is None:
+            source_type = _infer_source_category(source)
+        if name and _doc_in_scope(
+            name, scope, source_type, doc.metadata, doc.page_content
+        ):
             indices.append(idx)
     if not indices:
         return [], scores[:0]
@@ -380,6 +458,7 @@ def _filter_docs_and_scores_by_scope(
     except Exception:
         filtered_scores = np.array([scores[idx] for idx in indices], dtype=scores.dtype)
     return filtered_docs, filtered_scores
+
 
 
 def _normalize_lines(text: str) -> list[str]:
@@ -486,14 +565,16 @@ def _build_contract_documents(
         grouped.setdefault(source, []).append(doc)
 
     form_fields_by_source: dict[str, list[tuple[str, str]]] = {}
+    inferred_process_id: str | None = None
     for source, docs in grouped.items():
-        name = Path(source).name
-        if name.startswith(_FORM_PREFIX):
+        source_type = _infer_source_category(source, source_dir)
+        if source_type == "form":
             combined = "\n".join(doc.page_content for doc in docs)
             form_fields_by_source[source] = _parse_form_fields(combined)
+        if inferred_process_id is None:
+            inferred_process_id = _process_id_from_source(source, source_dir)
 
-    inferred_process_id = process_id
-    if inferred_process_id is None:
+    if inferred_process_id is None and process_id is None:
         candidates = []
         for fields in form_fields_by_source.values():
             candidate = _infer_process_id_from_fields(fields)
@@ -506,18 +587,28 @@ def _build_contract_documents(
                     "Multiple process_id values detected; using %s.",
                     inferred_process_id,
                 )
+    if inferred_process_id and process_id and inferred_process_id != process_id:
+        logging.warning(
+            "Process ID mismatch between folder (%s) and input (%s); using folder value.",
+            inferred_process_id,
+            process_id,
+        )
 
     output_docs: list[Document] = []
     for source, docs in grouped.items():
         name = Path(source).name
+        source_type = _infer_source_category(source, source_dir)
         doc_id = _doc_id_from_source(source, source_dir)
         base_meta: dict[str, object] = {"source": source, "doc_id": doc_id}
-        if inferred_process_id:
-            base_meta["process_id"] = inferred_process_id
+        process_id_value = _process_id_from_source(source, source_dir)
+        if process_id_value is None:
+            process_id_value = inferred_process_id or process_id
+        if process_id_value:
+            base_meta["process_id"] = process_id_value
         if created_at:
             base_meta["created_at"] = created_at
 
-        if name.startswith(_FORM_PREFIX):
+        if source_type == "form":
             fields = form_fields_by_source.get(source, [])
             if not fields:
                 combined = "\n".join(doc.page_content for doc in docs).strip()
@@ -532,9 +623,6 @@ def _build_contract_documents(
             continue
 
         filename = name
-        if name.startswith(_ATTACHMENT_PREFIX):
-            filename = name[len(_ATTACHMENT_PREFIX) :]
-
         for doc in docs:
             page = doc.metadata.get("page") if doc.metadata else None
             if page is None:
@@ -557,6 +645,58 @@ def _build_contract_documents(
 
     return output_docs, inferred_process_id
 
+
+def _normalize_source_type(value: str | None) -> str | None:
+    if not value:
+        return None
+    raw = value.strip()
+    lowered = raw.lower()
+    if raw in _FORM_DIR_NAMES or lowered in _FORM_DIR_NAMES:
+        return "form"
+    if raw in _ATTACHMENT_DIR_NAMES or lowered in _ATTACHMENT_DIR_NAMES:
+        return "attachment"
+    if lowered in {"form", "attachment"}:
+        return lowered
+    return None
+
+
+def _infer_source_category(
+    source: str, source_dir: Path | None = None
+) -> str | None:
+    if source_dir is not None:
+        parts = _relative_parts(source, source_dir)
+        if len(parts) >= 2:
+            category = _normalize_source_type(parts[1])
+            if category:
+                return category
+    try:
+        parts = Path(source).parts
+    except Exception:
+        return None
+    for part in reversed(parts[:-1]):
+        category = _normalize_source_type(part)
+        if category:
+            return category
+    return None
+
+
+def _process_id_from_source(source: str, source_dir: Path) -> str | None:
+    parts = _relative_parts(source, source_dir)
+    if not parts:
+        return None
+    if len(parts) == 1:
+        return None
+    if _normalize_source_type(parts[0]):
+        return None
+    return parts[0]
+
+
+def _relative_parts(source: str, source_dir: Path) -> tuple[str, ...]:
+    try:
+        rel = Path(source).resolve().relative_to(source_dir.resolve())
+    except Exception:
+        return ()
+    return rel.parts
 
 def _assign_chunk_ids(docs: list[Document]) -> list[Document]:
     counters: dict[tuple[object, ...], int] = {}

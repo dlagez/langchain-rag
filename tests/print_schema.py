@@ -188,10 +188,9 @@ if __name__ == "__main__":
 # Scanned points: 200 只扫描了 200 条样本，所以字段不一定齐全。
 # Payload keys observed: metadata, page_content 每条记录就两块——文本 page_content + 元数据 metadata。
 
-# Metadata keys observed: chunk_id, chunk_type, doc_id, doc_type_hint, field, filename, has_checkbox_like, signature_page, source, source_type
+# Metadata keys observed: chunk_id, doc_id, doc_type_hint, field, filename, has_checkbox_like, signature_page, source, source_type
 # Metadata value types:
 # - chunk_id: int
-# - chunk_type: str
 # - doc_id: str
 # - doc_type_hint: str
 # - field: str

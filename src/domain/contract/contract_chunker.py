@@ -10,7 +10,7 @@ from langchain_core.documents import Document
 # 根据文件名/内容判断文档类型：合同正文、检查清单、其它
 # 按中文合同结构（章/条/节）、表格行、句子长度等规则切分
 # 对签署页、清单项等做特殊处理
-# 生成带有元数据的 Document（例如 doc_type_hint、chunk_type、page、has_signature 等）
+# 生成带有元数据的 Document（例如 doc_type_hint、page、has_signature 等）
 
 _CONTRACT_NAME_HINTS = (
     "建设工程施工合同",
@@ -167,7 +167,6 @@ class ContractChunker:
                         text,
                         metadata,
                         doc_type="contract",
-                        chunk_type="signature",
                         page=segment.page,
                         max_len=self._contract_max,
                         min_len=self._contract_min,
@@ -186,7 +185,6 @@ class ContractChunker:
                 metadata=self._with_metadata(
                     metadata,
                     doc_type="contract",
-                    chunk_type="body",
                     page=None,
                     has_signature=False,
                 ),
@@ -210,12 +208,11 @@ class ContractChunker:
                     metadata=self._with_metadata(
                         metadata,
                         doc_type="checklist",
-                        chunk_type="item_block",
-                        page=None,
-                        has_signature=False,
-                        has_checkbox=has_checkbox,
-                    ),
-                )
+                    page=None,
+                    has_signature=False,
+                    has_checkbox=has_checkbox,
+                ),
+            )
             )
         return output
 
@@ -230,7 +227,6 @@ class ContractChunker:
                 metadata=self._with_metadata(
                     metadata,
                     doc_type="other",
-                    chunk_type="section",
                     page=None,
                     has_signature=False,
                 ),
@@ -391,7 +387,6 @@ class ContractChunker:
         metadata: dict,
         *,
         doc_type: str,
-        chunk_type: str,
         page: int | None,
         max_len: int,
         min_len: int,
@@ -409,7 +404,6 @@ class ContractChunker:
                     metadata=self._with_metadata(
                         metadata,
                         doc_type=doc_type,
-                        chunk_type=chunk_type,
                         page=page,
                         has_signature=has_signature,
                     ),
@@ -422,14 +416,12 @@ class ContractChunker:
         metadata: dict,
         *,
         doc_type: str,
-        chunk_type: str,
         page: int | None,
         has_signature: bool,
         has_checkbox: bool | None = None,
     ) -> dict:
         meta = dict(metadata)
         meta["doc_type_hint"] = doc_type
-        meta["chunk_type"] = chunk_type
         if has_signature:
             meta["signature_page"] = True
         if has_checkbox is not None:
