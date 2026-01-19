@@ -157,6 +157,13 @@ def main() -> None:
     form_question = os.getenv("RAG_FORM_QUESTION", "").strip()
     attachment_question = os.getenv("RAG_ATTACHMENT_QUESTION", "").strip()
     compare_question = os.getenv("RAG_COMPARE_QUESTION", "").strip()
+    form_retrieval_query = (
+        os.getenv("RAG_FORM_RETRIEVAL_QUERY", "").strip() or form_question
+    )
+    attachment_retrieval_query = (
+        os.getenv("RAG_ATTACHMENT_RETRIEVAL_QUERY", "").strip()
+        or attachment_question
+    )
     missing = []
     if not form_question:
         missing.append("RAG_FORM_QUESTION")
@@ -188,6 +195,7 @@ def main() -> None:
         scope: SourceScope,
         *,
         direct_docs: list[Document] | None = None,
+        retrieval_query: str | None = None,
     ) -> str:
         if direct_docs is not None:
             docs = _tag_retriever(direct_docs, f"direct:{label}")
@@ -228,7 +236,7 @@ def main() -> None:
                 return ""
 
         docs, strategy = retrieve_documents(
-            question,
+            retrieval_query or question,
             client,
             collection_name,
             attachment_docs,
@@ -266,10 +274,17 @@ def main() -> None:
 
     form_direct_docs = _filter_docs_by_scope(raw_source_docs, form_scope)
     form_answer = _run_extraction(
-        "form", form_question, form_scope, direct_docs=form_direct_docs
+        "form",
+        form_question,
+        form_scope,
+        direct_docs=form_direct_docs,
+        retrieval_query=form_retrieval_query,
     )
     attachment_answer = _run_extraction(
-        "attachment", attachment_question, attachment_scope
+        "attachment",
+        attachment_question,
+        attachment_scope,
+        retrieval_query=attachment_retrieval_query,
     )
 
     compare_prompt = (
