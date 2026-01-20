@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+import time
 from datetime import datetime
 import logging
 import os
@@ -112,6 +114,58 @@ def _filter_docs_by_process_id(
     return filtered
 
 
+def _extract_token_usage(response) -> dict[str, int | None]:
+    usage = None
+    for attr in ("usage_metadata", "response_metadata", "metadata"):
+        value = getattr(response, attr, None)
+        if isinstance(value, dict):
+            if attr == "usage_metadata":
+                usage = value
+                break
+            nested = value.get("usage_metadata")
+            if isinstance(nested, dict):
+                usage = nested
+                break
+            nested = value.get("usage")
+            if isinstance(nested, dict):
+                usage = nested
+                break
+            nested = value.get("token_usage")
+            if isinstance(nested, dict):
+                usage = nested
+                break
+    if usage is None and isinstance(response, dict):
+        usage = response.get("usage") or response.get("token_usage")
+
+    def _pick_int(keys: tuple[str, ...]) -> int | None:
+        for key in keys:
+            val = usage.get(key) if isinstance(usage, dict) else None
+            if isinstance(val, bool):
+                continue
+            if isinstance(val, (int, float)):
+                return int(val)
+        return None
+
+    prompt_tokens = _pick_int(
+        ("prompt_tokens", "input_tokens", "prompt_tokens_total")
+    )
+    completion_tokens = _pick_int(
+        ("completion_tokens", "output_tokens", "generated_tokens")
+    )
+    total_tokens = _pick_int(("total_tokens", "total", "tokens"))
+    if (
+        total_tokens is None
+        and prompt_tokens is not None
+        and completion_tokens is not None
+    ):
+        total_tokens = prompt_tokens + completion_tokens
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+    }
+
+
 def _resolve_active_process_id(
     docs: list[Document], explicit_process_id: str | None
 ) -> str:
@@ -215,6 +269,7 @@ def main() -> None:
     load_dotenv()
     configure_logging()
     args = _parse_args()
+    run_started = time.perf_counter()
 
     root = Path(__file__).resolve().parents[1]
     base_source_dir = root / "data" / "source"
@@ -366,6 +421,7 @@ def main() -> None:
     prompt_base_dir = root / "data" / "prompt"
     prompt_dir = prompt_base_dir / active_process_id
     prompt_dir.mkdir(parents=True, exist_ok=True)
+    llm_stats: dict[str, dict[str, int | float | None]] = {}
 
     def _save_prompt(label: str, prompt: str, answer: str) -> Path:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
@@ -373,6 +429,17 @@ def main() -> None:
         payload = f"{prompt}\n\n---\nAnswer:\n{answer}"
         prompt_path.write_text(payload, encoding="utf-8")
         return prompt_path
+
+    def _record_llm_stats(
+        label: str, response, elapsed_seconds: float
+    ) -> None:
+        usage = _extract_token_usage(response)
+        llm_stats[label] = {
+            "prompt_tokens": usage.get("prompt_tokens"),
+            "completion_tokens": usage.get("completion_tokens"),
+            "total_tokens": usage.get("total_tokens"),
+            "seconds": round(elapsed_seconds, 3),
+        }
 
     def _run_extraction(
         label: str,
@@ -394,7 +461,10 @@ def main() -> None:
                 "If the answer is not in the context, say you do not know.\n\n"
                 f"{context}\n\nQuestion: {question}\nAnswer:"
             )
+            start_time = time.perf_counter()
             response = llm.invoke(prompt)
+            elapsed = time.perf_counter() - start_time
+            _record_llm_stats(label, response, elapsed)
             answer_text = _response_text(response.content)
             prompt_path = _save_prompt(label, prompt, answer_text)
             print(f"[{label}] Prompt saved to {prompt_path}")
@@ -445,7 +515,10 @@ def main() -> None:
             "If the answer is not in the context, say you do not know.\n\n"
             f"{context}\n\nQuestion: {question}\nAnswer:"
         )
+        start_time = time.perf_counter()
         response = llm.invoke(prompt)
+        elapsed = time.perf_counter() - start_time
+        _record_llm_stats(label, response, elapsed)
         answer_text = _response_text(response.content)
         prompt_path = _save_prompt(label, prompt, answer_text)
 
@@ -488,11 +561,68 @@ def main() -> None:
         f"Attachment extraction:\n{attachment_answer or '<none>'}\n\n"
         f"Question: {compare_question}\nAnswer:"
     )
+    compare_start = time.perf_counter()
     compare_response = llm.invoke(compare_prompt)
+    compare_elapsed = time.perf_counter() - compare_start
+    _record_llm_stats("compare", compare_response, compare_elapsed)
     compare_answer = _response_text(compare_response.content)
     compare_prompt_path = _save_prompt("compare", compare_prompt, compare_answer)
     print(f"[compare] Prompt saved to {compare_prompt_path}")
     print(f"[compare] Answer:\n {compare_answer}")
+
+    def _sum_metric(key: str) -> float:
+        values = [
+            stats.get(key)
+            for stats in llm_stats.values()
+            if isinstance(stats.get(key), (int, float))
+        ]
+        return round(sum(values), 3) if values else 0.0
+
+    def _sum_tokens(key: str) -> tuple[int | None, list[str]]:
+        total = 0
+        missing = []
+        for label in ("form", "attachment", "compare"):
+            stats = llm_stats.get(label, {})
+            val = stats.get(key)
+            if isinstance(val, (int, float)):
+                total += int(val)
+            else:
+                missing.append(label)
+        return (total if total > 0 else None), missing
+
+    token_report = {
+        "form": llm_stats.get("form", {}),
+        "attachment": llm_stats.get("attachment", {}),
+        "compare": llm_stats.get("compare", {}),
+    }
+    total_prompt, missing_prompt = _sum_tokens("prompt_tokens")
+    total_completion, missing_completion = _sum_tokens("completion_tokens")
+    total_tokens, missing_total = _sum_tokens("total_tokens")
+    token_report["total"] = {
+        "prompt_tokens": total_prompt,
+        "completion_tokens": total_completion,
+        "total_tokens": total_tokens,
+        "seconds": _sum_metric("seconds"),
+        "missing_prompt_tokens": missing_prompt,
+        "missing_completion_tokens": missing_completion,
+        "missing_total_tokens": missing_total,
+    }
+    token_report["rectification_seconds"] = llm_stats.get("compare", {}).get(
+        "seconds"
+    )
+    token_report["elapsed_seconds"] = round(
+        time.perf_counter() - run_started, 3
+    )
+
+    metrics_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    metrics_path = (
+        prompt_dir / f"metrics_{metrics_timestamp}_rag_usage.json"
+    )
+    metrics_path.write_text(
+        json.dumps(token_report, ensure_ascii=True, indent=2),
+        encoding="utf-8",
+    )
+    print(f"[metrics] Usage saved to {metrics_path}")
 
 
 if __name__ == "__main__":
