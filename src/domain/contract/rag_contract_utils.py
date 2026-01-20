@@ -7,30 +7,15 @@ import re
 
 import numpy as np
 from langchain_core.documents import Document
-from qdrant_client.http.models import FieldCondition, Filter, MatchValue
 
-from .contract_attachment_selector import ContractAttachmentSelector
 from .contract_chunker import ContractChunker
-from util.document_utils import _doc_signature, _format_source
-from util.keyword_utils import _extract_source_hint
+from util.document_utils import _format_source
 
 # 合同 RAG 的领域工具集，把原始文档整理、过滤、分块、召回标签等“合同业务逻辑”集中在这里。主要职责：
-# 来源范围控制：SourceScope + _infer_source_scope/_filter_docs_by_scope/_filter_docs_and_scores_by_scope，按“表单/附件/文件名/关键词”等限定检索范围
-# 召回结果标注与合并：_tag_retriever/_merge_docs_with_retriever/_unique_sources_with_retriever，给 doc 打上召回来源、合并去重
+# 来源范围控制：SourceScope + _filter_docs_by_scope/_filter_docs_and_scores_by_scope，按“表单/附件/文件名/关键词”等限定检索范围
+# 召回结果标注：_tag_retriever/_unique_sources_with_retriever，给 doc 打上召回来源
 # 附件/表单结构化：_build_contract_documents，把原始文本转为结构化 Document（字段、段落、页码、source_type 等）
-# 正则兜底检索：_regex_attachment_fallback，基于关键词正则从附件文本里兜底召回
 # 索引分块与ID：_chunk_documents_for_index、_assign_chunk_ids 用合同分块策略切片并打 chunk_id
-# 检索过滤：_source_type_filter 生成 Qdrant 的过滤条件
-
-def _source_type_filter(source_type: str) -> Filter:
-    return Filter(
-        must=[
-            FieldCondition(
-                key="metadata.source_type", match=MatchValue(value=source_type)
-            )
-        ]
-    )
-
 
 def _normalize_retriever_labels(value) -> list[str]:
     if value is None:
@@ -49,37 +34,6 @@ def _tag_retriever(docs: list[Document], label: str) -> list[Document]:
             labels.append(label)
         doc.metadata["_retriever"] = labels
     return docs
-
-
-def _merge_retriever_labels(target: Document, incoming: Document) -> None:
-    if target.metadata is None or not isinstance(target.metadata, dict):
-        target.metadata = {}
-    incoming_labels = _normalize_retriever_labels(
-        incoming.metadata.get("_retriever") if incoming.metadata else None
-    )
-    if not incoming_labels:
-        return
-    target_labels = _normalize_retriever_labels(
-        target.metadata.get("_retriever")
-    )
-    merged = list(dict.fromkeys(target_labels + incoming_labels))
-    target.metadata["_retriever"] = merged
-
-
-def _merge_docs_with_retriever(
-    primary: list[Document], secondary: list[Document]
-) -> list[Document]:
-    seen: dict[tuple, Document] = {}
-    merged: list[Document] = []
-    for doc in primary + secondary:
-        key = _doc_signature(doc)
-        existing = seen.get(key)
-        if existing is None:
-            merged.append(doc)
-            seen[key] = doc
-        else:
-            _merge_retriever_labels(existing, doc)
-    return merged
 
 
 def _format_retriever(doc: Document) -> str:
@@ -108,81 +62,6 @@ def _unique_sources_with_retriever(docs: list[Document]) -> list[str]:
     return output
 
 
-_KEYWORD_PUNCTUATION = " ,.;:?!、。，；：？！"
-_PERCENT_RE = re.compile(r"^\d{1,2}[%％]$")
-
-
-def _regex_keywords_from_query(keyword_query: str) -> list[str]:
-    if not keyword_query:
-        return []
-    tokens: list[str] = []
-    for raw in keyword_query.split():
-        token = raw.strip(_KEYWORD_PUNCTUATION)
-        if not token:
-            continue
-        if "?" in raw or "？" in raw:
-            if len(token) > 8:
-                continue
-            token = token.replace("?", "").replace("？", "")
-        if len(token) < 2 and not re.search(r"\d", token):
-            continue
-        tokens.append(token)
-    return list(dict.fromkeys(tokens))
-
-
-def _regex_keyword_patterns(tokens: list[str]) -> list[str]:
-    patterns: list[str] = []
-    for token in tokens:
-        if _PERCENT_RE.fullmatch(token):
-            number = re.search(r"\d{1,2}", token)
-            if number:
-                patterns.append(f"{number.group(0)}\\s*[%％]")
-            continue
-        patterns.append(re.escape(token))
-    return patterns
-
-
-def _regex_attachment_fallback(
-    docs: list[Document],
-    keyword_query: str,
-    limit: int,
-    source_scope: "SourceScope | None",
-) -> list[Document]:
-    tokens = _regex_keywords_from_query(keyword_query)
-    if not tokens:
-        return []
-    patterns = _regex_keyword_patterns(tokens)
-    if not patterns:
-        return []
-    pattern = re.compile("|".join(patterns))
-    scored: list[tuple[int, Document]] = []
-    for doc in docs:
-        metadata = doc.metadata or {}
-        source = metadata.get("source") or ""
-        name = Path(source).name
-        source_type = _normalize_source_type(metadata.get("source_type"))
-        if source_type is None:
-            source_type = _infer_source_category(source)
-        if source_type != "attachment":
-            continue
-        if source_scope and source_scope.is_active():
-            if not name or not _doc_in_scope(
-                name, source_scope, source_type, metadata, text
-            ):
-                continue
-        text = doc.page_content
-        if not text:
-            continue
-        matches = pattern.findall(text)
-        if matches:
-            scored.append((len(matches), doc))
-    scored.sort(key=lambda item: (-item[0], item[1].metadata.get("page") or 0))
-    return [doc for _, doc in scored[:limit]]
-
-
-
-_FORM_PREFIX = "表单"
-_ATTACHMENT_PREFIX = "附件"
 _FORM_DIR_NAMES = {"表单", "form", "forms"}
 _ATTACHMENT_DIR_NAMES = {"附件", "attachment", "attachments"}
 _FORM_FIELD_MAX_LEN = 28
@@ -238,89 +117,6 @@ def _collect_source_names(raw_docs: list[Document]) -> list[str]:
             seen.add(name)
             names.append(name)
     return sorted(names)
-
-
-def _match_source_names(scope: SourceScope, source_names: list[str]) -> list[str]:
-    return [name for name in source_names if _doc_in_scope(name, scope)]
-
-
-def _infer_explicit_sources(prompt: str, source_names: list[str]) -> list[str]:
-    matches: list[str] = []
-    for name in source_names:
-        if name and name in prompt:
-            matches.append(name)
-            continue
-        stem = Path(name).stem
-        if stem and stem in prompt:
-            matches.append(name)
-    if not matches:
-        return []
-    max_len = max(len(item) for item in matches)
-    return [item for item in matches if len(item) == max_len]
-
-
-def _infer_source_scope(
-    prompt: str,
-    source_names: list[str],
-    raw_docs: list[Document] | None = None,
-) -> SourceScope:
-    explicit = _infer_explicit_sources(prompt, source_names)
-    if explicit:
-        return SourceScope(names=tuple(explicit))
-
-    include_terms: list[str] = []
-    exclude_terms: list[str] = []
-    prefix: str | None = None
-
-    if "表单" in prompt or "审批表" in prompt:
-        prefix = "表单"
-
-    if any(term in prompt for term in ("附件", "合同", "招标文件", "通知书", "协议")):
-        if prefix is None:
-            prefix = "附件"
-
-    if raw_docs is not None and "合同" in prompt and prefix != _FORM_PREFIX:
-        contract_name_candidates = [
-            name
-            for name in source_names
-            if "合同" in name
-        ]
-        if contract_name_candidates:
-            return SourceScope(names=tuple(contract_name_candidates))
-        selector = ContractAttachmentSelector()
-        contract_names = selector.select_contract_names(raw_docs, top_k=1)
-        if contract_names:
-            return SourceScope(names=tuple(contract_names))
-
-    if "招标文件" in prompt:
-        prefix = "附件"
-        include_terms = ["招标文件"]
-    elif "通知书" in prompt:
-        prefix = "附件"
-        include_terms = ["通知书"]
-    elif "协议" in prompt and "合同" not in prompt:
-        prefix = "附件"
-        include_terms = ["协议"]
-    elif "附件" in prompt and "合同" in prompt:
-        prefix = "附件"
-        include_terms = ["合同"]
-        exclude_terms = ["招标文件"]
-    elif "合同" in prompt and prefix == "附件":
-        include_terms = ["合同"]
-        exclude_terms = ["招标文件"]
-
-    hint = _extract_source_hint(prompt)
-    if hint and hint not in include_terms:
-        include_terms.append(hint)
-
-    include_terms = list(dict.fromkeys(include_terms))
-    exclude_terms = list(dict.fromkeys(exclude_terms))
-
-    return SourceScope(
-        prefix=prefix,
-        include_terms=tuple(include_terms),
-        exclude_terms=tuple(exclude_terms),
-    )
 
 
 def _format_source_scope(scope: SourceScope) -> str:

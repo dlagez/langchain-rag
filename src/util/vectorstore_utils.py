@@ -10,7 +10,6 @@ from langchain_core.documents import Document
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, PointStruct, VectorParams
 
-from .keyword_utils import _keyword_score, _query_terms
 
 
 def _fingerprint_processed(processed_dir: Path) -> str:
@@ -169,45 +168,3 @@ def _docs_from_search_results(results) -> tuple[list[Document], np.ndarray]:
     return docs, np.array(scores, dtype=np.float32)
 
 
-def _normalize_scores(scores: np.ndarray) -> np.ndarray:
-    if scores.size == 0:
-        return scores
-    min_score = float(np.min(scores))
-    max_score = float(np.max(scores))
-    if max_score == min_score:
-        return np.zeros_like(scores)
-    return (scores - min_score) / (max_score - min_score)
-
-
-def _keyword_scores_for_docs(
-    docs: list[Document],
-    cjk_keywords: list[str],
-    latin_keywords: list[str],
-) -> np.ndarray:
-    scores = np.zeros(len(docs), dtype=np.float32)
-    for idx, doc in enumerate(docs):
-        scores[idx] = _keyword_score(doc.page_content, cjk_keywords, latin_keywords)
-    return scores
-
-
-def _hybrid_rerank(
-    query: str,
-    docs: list[Document],
-    vector_scores: np.ndarray,
-    k: int,
-    alpha: float,
-) -> list[Document]:
-    if vector_scores.size == 0 or not docs:
-        return []
-    cjk, latin = _query_terms(query)
-    keyword_scores = _keyword_scores_for_docs(docs, cjk, latin)
-
-    if keyword_scores.size > 0 and float(keyword_scores.max()) > 0:
-        combined = _normalize_scores(vector_scores) * alpha + _normalize_scores(
-            keyword_scores
-        ) * (1 - alpha)
-        order = np.argsort(combined)[::-1][:k]
-    else:
-        order = np.argsort(vector_scores)[::-1][:k]
-
-    return [docs[idx] for idx in order]

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 
 from langchain_core.documents import Document
@@ -56,17 +55,6 @@ def _format_context(docs: list[Document]) -> str:
     return "\n\n".join(blocks)
 
 
-def _unique_sources(docs: list[Document]) -> list[str]:
-    seen = set()
-    sources: list[str] = []
-    for doc in docs:
-        label = _format_source(doc)
-        if label not in seen:
-            seen.add(label)
-            sources.append(label)
-    return sources
-
-
 def _response_text(content) -> str:
     if content is None:
         return ""
@@ -85,20 +73,3 @@ def _response_text(content) -> str:
     return str(content)
 
 
-def _doc_signature(doc: Document) -> tuple:
-    source = doc.metadata.get("source")
-    page = doc.metadata.get("page")
-    content_hash = hashlib.sha256(doc.page_content.encode("utf-8")).hexdigest()
-    return (source, page, content_hash)
-
-
-def _merge_docs(primary: list[Document], secondary: list[Document]) -> list[Document]:
-    seen = set()
-    merged: list[Document] = []
-    for doc in primary + secondary:
-        key = _doc_signature(doc)
-        if key in seen:
-            continue
-        seen.add(key)
-        merged.append(doc)
-    return merged
