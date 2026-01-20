@@ -67,6 +67,14 @@ def retrieve_documents(
 ) -> tuple[list[Document], str]:
     if not process_id:
         raise SystemExit("process_id is required for retrieval.")
+    logging.info(
+        "Retrieval request: query_len=%s collection=%s process_id=%s k=%s fetch_k=%s",
+        len(query or ""),
+        collection_name,
+        process_id,
+        k,
+        fetch_k,
+    )
     fetch_k = max(fetch_k, k)
     query_vec = embedder.embed_query(query)
     query_filter = Filter(
@@ -88,13 +96,37 @@ def retrieve_documents(
         limit=fetch_k,
         query_filter=query_filter,
     )
+    logging.info(
+        "Qdrant returned %s points for collection=%s process_id=%s",
+        len(attachment_results) if attachment_results is not None else 0,
+        collection_name,
+        process_id,
+    )
     attachment_docs, attachment_scores = _docs_from_search_results(
         attachment_results
     )
+    if attachment_docs:
+        sample_sources = ", ".join(
+            _format_source(doc) for doc in attachment_docs[:10]
+        )
+        logging.info(
+            "Qdrant sample sources (%s shown): %s",
+            min(10, len(attachment_docs)),
+            sample_sources,
+        )
     docs = attachment_docs
     if source_scope and source_scope.is_active():
+        logging.info(
+            "Applying scope filter: %s",
+            _format_source_scope(source_scope),
+        )
         docs, _ = _filter_docs_and_scores_by_scope(
             docs, attachment_scores, source_scope
+        )
+        logging.info(
+            "Scope filter kept %s/%s docs",
+            len(docs),
+            len(attachment_docs),
         )
     if not docs:
         return [], "none"
@@ -146,6 +178,59 @@ def run_extraction(
         print(f"[{label}] Answer:\n {answer_text}")
         print(f"[{label}] Retrieval: direct")
         print(f"[{label}] Sources:")
+        for source in _unique_sources_with_retriever(docs):
+            print("-", source)
+        return answer_text
+
+    if scope.is_active():
+        print(f"[{label}] Retrieval scope: {_format_source_scope(scope)}")
+        scope_docs = _filter_docs_by_scope(attachment_docs, scope)
+        matched_files = _collect_source_names(scope_docs)
+        if matched_files:
+            print(f"[{label}] Scope files:")
+            for name in matched_files[:20]:
+                print("-", name)
+        else:
+            print(f"[{label}] Scope files: <none>")
+            print(
+                f"[{label}] No files matched the retrieval scope; aborting search."
+            )
+            return ""
+
+    docs, strategy = retrieve_documents(
+        retrieval_query or question,
+        client,
+        collection_name,
+        attachment_docs,
+        embedder,
+        k=args.k,
+        fetch_k=args.fetch_k,
+        alpha=alpha,
+        source_scope=scope,
+        process_id=active_process_id,
+    )
+
+    if not docs:
+        print(f"[{label}] No relevant documents found.")
+        return ""
+
+    context = _format_context(docs)
+    prompt = (
+        "Use the following context to answer the question. "
+        "If the answer is not in the context, say you do not know.\n\n"
+        f"{context}\n\nQuestion: {question}\nAnswer:"
+    )
+    start_time = time.perf_counter()
+    response = llm.invoke(prompt)
+    elapsed = time.perf_counter() - start_time
+    record_llm_stats(llm_stats, label, response, elapsed)
+    answer_text = _response_text(response.content)
+    prompt_path = save_prompt(label, prompt, answer_text, prompt_dir)
+
+    print(f"[{label}] Prompt saved to {prompt_path}")
+    print(f"[{label}] Answer:\n {answer_text}")
+    print(f"[{label}] Retrieval: {strategy}")
+    print(f"[{label}] Sources:")
     for source in _unique_sources_with_retriever(docs):
         print("-", source)
     return answer_text

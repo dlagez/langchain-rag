@@ -74,6 +74,7 @@ def main() -> None:
     args = _parse_args()
     run_started = time.perf_counter()
 
+    # 确定与仓库根目录相关的关键目录路径。
     root = Path(__file__).resolve().parents[1]
     base_source_dir = root / "data" / "source"
     processed_dir = root / "data" / "processed"
@@ -81,6 +82,7 @@ def main() -> None:
     embedding_provider, embedding_model = resolve_embedding_config()
     llm_provider, llm_model = resolve_llm_config()
 
+    # 通过命令行或环境变量确定 process_id，并定位对应目录。
     process_id = (
         args.process_id
         or os.getenv("PROCESS_ID")
@@ -89,6 +91,7 @@ def main() -> None:
     source_dir, process_id = _resolve_process_dir(base_source_dir, process_id)
     processed_dir = processed_dir / process_id
     processed_dir.mkdir(parents=True, exist_ok=True)
+    # 加载并对原始源文件执行 OCR，供后续结构化处理使用。
     # 解析源文件（含 OCR）并构建结构化文档
     ocr_tool = _LazyOCR()
     # OCR + 文本抽取 -> 原始文档切分
@@ -123,6 +126,7 @@ def main() -> None:
     process_log_dir.mkdir(parents=True, exist_ok=True)
     os.environ["RAG_LOG_DIR"] = str(process_log_dir)
     logging.info("Log dir: %s", process_log_dir)
+    # 记录当前流程的文件列表以便审计追踪。
     process_files = _list_process_files(source_dir)
     if process_files:
         logging.info(
@@ -169,7 +173,7 @@ def main() -> None:
             "No contract file detected; using all attachment documents."
         )
 
-    # 构建或加载向量索引（仅附件）
+    # 构建或复用仅包含附件的向量索引。
     client, collection_name, embedder = build_or_load_vectorstore(
         attachment_docs,
         persist_dir,
@@ -187,7 +191,7 @@ def main() -> None:
         "Embedding provider: %s (%s)", embedding_provider, embedding_model
     )
 
-    # 初始化 LLM
+    # 初始化负责回答问题的 LLM。
     llm = build_llm(llm_provider, llm_model)
     logging.info("LLM provider: %s (%s)", llm_provider, llm_model)
 
@@ -219,11 +223,12 @@ def main() -> None:
         )
         return
 
-    alpha = float(os.getenv("RAG_ALPHA", "0.7"))
+    # 准备保存提示词的目录并初始化统计结构。
     prompt_base_dir = root / "data" / "prompt"
     prompt_dir = prompt_base_dir / active_process_id
     prompt_dir.mkdir(parents=True, exist_ok=True)
     llm_stats: dict[str, dict[str, int | float | None]] = {}
+    alpha = float(os.getenv("RAG_ALPHA", "0.7"))
 
     form_scope = SourceScope(prefix="表单")
     if contract_names:
@@ -231,6 +236,7 @@ def main() -> None:
     else:
         attachment_scope = SourceScope(prefix="附件", include_terms=("合同",))
 
+    # 获取表单相关文档，并依据 process_id 过滤。
     form_direct_docs = _filter_docs_by_scope(raw_source_docs, form_scope)
     form_direct_docs = _filter_docs_by_process_id(
         form_direct_docs, active_process_id
@@ -285,6 +291,7 @@ def main() -> None:
     print(f"[compare] Prompt saved to {compare_prompt_path}")
     print(f"[compare] Answer:\n {compare_answer}")
 
+    # 汇总每个阶段的 token 使用情况并累加总量。
     token_report = {
         "form": llm_stats.get("form", {}),
         "attachment": llm_stats.get("attachment", {}),

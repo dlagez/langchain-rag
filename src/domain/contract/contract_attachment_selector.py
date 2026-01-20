@@ -12,6 +12,7 @@ _NAME_STRONG_TERMS = (
     "施工合同",
     "合同协议书",
     "合同条款",
+    "合同"
 )
 _NAME_EXCLUDE_TERMS = (
     "核对",
@@ -25,6 +26,7 @@ _NAME_EXCLUDE_TERMS = (
     "说明",
     "申请",
     "审批表",
+    "协议"
 )
 _HEAD_FIELDS = (
     "合同编号",

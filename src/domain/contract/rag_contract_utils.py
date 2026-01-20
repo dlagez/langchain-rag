@@ -535,7 +535,12 @@ def _split_attachment_paragraphs(text: str) -> list[str]:
 
 def _doc_id_from_source(source: str, source_dir: Path) -> str:
     try:
-        return str(Path(source).resolve().relative_to(source_dir.resolve()))
+        source_path = Path(source).resolve()
+        source_dir = source_dir.resolve()
+        # Prefer full process-aware path: source/<process_id>/attachment/<file>
+        if source_dir.parent.exists():
+            return str(source_path.relative_to(source_dir.parent))
+        return str(source_path.relative_to(source_dir))
     except Exception:
         return Path(source).name
 

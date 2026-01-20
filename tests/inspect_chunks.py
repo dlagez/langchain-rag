@@ -63,6 +63,11 @@ def _parse_args() -> argparse.Namespace:
         "--collection",
         help="Override QDRANT_COLLECTION.",
     )
+    parser.add_argument(
+        "--list-doc-ids",
+        action="store_true",
+        help="List unique doc_id values then exit.",
+    )
     return parser.parse_args()
 
 
@@ -224,6 +229,8 @@ def main() -> None:
     scanned = 0
     next_offset = None
     stop = False
+    if args.list_doc_ids:
+        doc_ids: set[str] = set()
     while True:
         response = client.scroll(
             collection_name=collection,
@@ -248,6 +255,11 @@ def main() -> None:
             metadata = payload.get("metadata") or {}
             if not isinstance(metadata, dict):
                 metadata = {}
+            if args.list_doc_ids:
+                value = metadata.get("doc_id")
+                if value is not None:
+                    doc_ids.add(str(value))
+                continue
             size = len(text)
             sizes.append(size)
 
@@ -288,6 +300,13 @@ def main() -> None:
         if next_offset is None:
             break
 
+    if args.list_doc_ids:
+        for value in sorted(doc_ids):
+            print(value)
+        print(f"Total doc_id count: {len(doc_ids)}")
+        print(f"Scanned chunks: {scanned}")
+        return
+
     if sizes:
         print(
             "Size stats (chars) for scanned: "
@@ -301,12 +320,14 @@ def main() -> None:
 if __name__ == "__main__":
     main()
 
+# python tests/inspect_chunks.py --list-doc-ids 列出所有doc-id
 # python tests/inspect_chunks.py --limit 1 --max-chars 400
 # python tests/inspect_chunks.py --source-contains 合同 --limit 3 --max-chars 0
 # python tests/inspect_chunks.py --chunk-id 0 --max-chars 400
 # python tests/inspect_chunks.py --point-id 100 --collection rag_docs
 # python tests/inspect_chunks.py --doc-id "attachment/高新三路声环境提升工程预留段建设项目工程总承包（EPC）项目合同12.12.pdf" --limit 3 --max-chars 0
 # python tests/inspect_chunks.py --doc-id-contains "合同12.12.pdf" --limit 3 --max-chars 0
+# python tests/inspect_chunks.py --doc-id-contains "总承包合同.pdf" --limit 3 --max-chars 0
 
 
 
