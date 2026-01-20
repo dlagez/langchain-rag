@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from .document_utils import (
     _build_metadata,
+    _doc_signature,
     _docs_from_text,
     _format_context,
     _format_source,
@@ -29,26 +30,33 @@ from .text_utils import (
     _split_pages,
 )
 from .vectorstore_utils import (
+    _bm25_search,
+    _build_bm25_index,
     _build_index_manifest,
     _collection_exists,
     _docs_from_search_results,
     _fingerprint_processed,
     _get_qdrant_client,
+    _load_bm25_index,
     _load_manifest,
     _manifest_matches,
     _qdrant_location,
     _recreate_collection,
+    _save_bm25_index,
     _save_manifest,
     _search_qdrant,
     _upsert_documents,
+    _fusion_rerank,
 )
 
 __all__ = [
     "_LazyOCR",
     "_build_index_manifest",
+    "_build_bm25_index",
     "_build_metadata",
     "_cjk_count",
     "_collection_exists",
+    "_doc_signature",
     "_docs_from_search_results",
     "_docs_from_text",
     "_ensure_page_markers",
@@ -66,6 +74,7 @@ __all__ = [
     "_get_qdrant_client",
     "_join_pages",
     "_load_cached_text",
+    "_load_bm25_index",
     "_load_manifest",
     "_looks_garbled",
     "_manifest_matches",
@@ -75,10 +84,13 @@ __all__ = [
     "_read_text_with_fallback",
     "_recreate_collection",
     "_response_text",
+    "_save_bm25_index",
     "_save_manifest",
+    "_bm25_search",
     "_search_qdrant",
     "_split_pages",
     "_upsert_documents",
+    "_fusion_rerank",
     "_write_text",
     "process_sources",
 ]

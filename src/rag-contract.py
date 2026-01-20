@@ -46,7 +46,7 @@ from service.rag_contract_service import (
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="RAG demo")
     parser.add_argument("question", nargs="?", help="Question to ask.")
-    parser.add_argument("--k", type=int, default=6, help="Top-k chunks to return.")
+    parser.add_argument("--k", type=int, default=10, help="Top-k chunks to return.")
     parser.add_argument(
         "--fetch-k",
         type=int,
@@ -174,7 +174,7 @@ def main() -> None:
         )
 
     # 构建或复用仅包含附件的向量索引。
-    client, collection_name, embedder = build_or_load_vectorstore(
+    client, collection_name, embedder, bm25_index = build_or_load_vectorstore(
         attachment_docs,
         persist_dir,
         processed_dir,
@@ -205,6 +205,9 @@ def main() -> None:
         os.getenv("RAG_ATTACHMENT_RETRIEVAL_QUERY", "").strip()
         or attachment_question
     )
+    attachment_keyword_query = os.getenv(
+        "RAG_ATTACHMENT_KEYWORD_QUERY", ""
+    ).strip()
     logging.info(
         "Retrieval queries: form_len=%s attachment_len=%s",
         len(form_retrieval_query),
@@ -252,6 +255,7 @@ def main() -> None:
         collection_name=collection_name,
         attachment_docs=attachment_docs,
         embedder=embedder,
+        bm25_index=bm25_index,
         llm_stats=llm_stats,
         alpha=alpha,
         active_process_id=active_process_id,
@@ -269,9 +273,11 @@ def main() -> None:
         collection_name=collection_name,
         attachment_docs=attachment_docs,
         embedder=embedder,
+        bm25_index=bm25_index,
         llm_stats=llm_stats,
         alpha=alpha,
         active_process_id=active_process_id,
+        keyword_query=attachment_keyword_query,
         retrieval_query=attachment_retrieval_query,
     )
 

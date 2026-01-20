@@ -47,6 +47,20 @@ def _format_source(doc: Document) -> str:
     return name
 
 
+def _doc_signature(doc: Document) -> str:
+    metadata = doc.metadata or {}
+    parts = [
+        metadata.get("doc_id") or "",
+        metadata.get("source") or "",
+        metadata.get("page") or "",
+        metadata.get("chunk_id") or "",
+        metadata.get("field") or "",
+    ]
+    if any(parts):
+        return "|".join(str(part) for part in parts)
+    return f"content:{hash(doc.page_content)}"
+
+
 def _format_context(docs: list[Document]) -> str:
     blocks = []
     for doc in docs:

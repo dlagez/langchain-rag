@@ -18,13 +18,16 @@ from domain.contract.rag_contract_utils import (
     _chunk_documents_for_index,
 )
 from util.util import (
+    _build_bm25_index,
     _build_index_manifest,
     _collection_exists,
     _get_qdrant_client,
+    _load_bm25_index,
     _load_manifest,
     _manifest_matches,
     _qdrant_location,
     _recreate_collection,
+    _save_bm25_index,
     _save_manifest,
     _upsert_documents,
 )
@@ -397,6 +400,10 @@ def build_or_load_vectorstore(
     chunk_overlap = int(os.getenv("RAG_CHUNK_OVERLAP", "100"))
     collection_name = os.getenv("QDRANT_COLLECTION", "contract_approval_rag")
     qdrant_location = _qdrant_location(persist_dir)
+    bm25_enabled = _env_flag("RAG_BM25_ENABLED", True)
+    bm25_k1 = float(os.getenv("RAG_BM25_K1", "1.2"))
+    bm25_b = float(os.getenv("RAG_BM25_B", "0.75"))
+    bm25_max_doc_tokens = int(os.getenv("RAG_BM25_MAX_DOC_TOKENS", "1024"))
 
     embeddings = _build_embeddings(embedding_provider, embedding_model)
     manifest = _build_index_manifest(
@@ -417,25 +424,56 @@ def build_or_load_vectorstore(
 
     client = _get_qdrant_client(persist_dir)
 
+    stored_manifest = {}
+    manifest_matches = False
     if not force_rebuild:
         stored_manifest = _load_manifest(persist_dir)
-        if _manifest_matches(stored_manifest, manifest) and _collection_exists(
-            client, collection_name
-        ):
-            return client, collection_name, embeddings
+        manifest_matches = _manifest_matches(stored_manifest, manifest)
+    vector_ok = manifest_matches and _collection_exists(client, collection_name)
+    bm25_index = None
+    bm25_ok = False
+    if bm25_enabled:
+        bm25_index = _load_bm25_index(persist_dir)
+        bm25_ok = (
+            bm25_index is not None
+            and abs(bm25_index.k1 - bm25_k1) < 1e-6
+            and abs(bm25_index.b - bm25_b) < 1e-6
+            and bm25_index.max_doc_tokens == bm25_max_doc_tokens
+        )
+        stored_doc_count = stored_manifest.get("doc_count")
+        if bm25_ok and isinstance(stored_doc_count, int):
+            bm25_ok = len(bm25_index.docs) == stored_doc_count
+    if vector_ok and (not bm25_enabled or bm25_ok):
+        return client, collection_name, embeddings, bm25_index
 
-    chunked_docs = _chunk_documents_for_index(
-        docs, chunk_size=chunk_size, chunk_overlap=chunk_overlap
-    )
-    splits = _assign_chunk_ids(chunked_docs)
-    if not splits:
-        raise SystemExit("No content left after splitting documents.")
+    needs_splits = (not vector_ok) or (bm25_enabled and not bm25_ok)
+    splits: list[Document] = []
+    if needs_splits:
+        chunked_docs = _chunk_documents_for_index(
+            docs, chunk_size=chunk_size, chunk_overlap=chunk_overlap
+        )
+        splits = _assign_chunk_ids(chunked_docs)
+        if not splits:
+            raise SystemExit("No content left after splitting documents.")
 
-    vectors = embeddings.embed_documents([doc.page_content for doc in splits])
-    if not vectors:
-        raise SystemExit("Embedding model returned no vectors.")
-    vector_size = len(vectors[0])
-    _recreate_collection(client, collection_name, vector_size)
-    _upsert_documents(client, collection_name, splits, vectors)
-    _save_manifest(persist_dir, manifest, doc_count=len(splits))
-    return client, collection_name, embeddings
+    if not vector_ok:
+        vectors = embeddings.embed_documents(
+            [doc.page_content for doc in splits]
+        )
+        if not vectors:
+            raise SystemExit("Embedding model returned no vectors.")
+        vector_size = len(vectors[0])
+        _recreate_collection(client, collection_name, vector_size)
+        _upsert_documents(client, collection_name, splits, vectors)
+        _save_manifest(persist_dir, manifest, doc_count=len(splits))
+
+    if bm25_enabled:
+        bm25_index = _build_bm25_index(
+            splits,
+            k1=bm25_k1,
+            b=bm25_b,
+            max_doc_tokens=bm25_max_doc_tokens,
+        )
+        _save_bm25_index(persist_dir, bm25_index)
+
+    return client, collection_name, embeddings, bm25_index

@@ -119,6 +119,7 @@ Optional:
 - `RAG_EMBEDDING_PROVIDER`: override embeddings provider (`google`/`bailian`).
 - `RAG_FORM_RETRIEVAL_QUERY`: retrieval-only query for form extraction (falls back to `RAG_FORM_QUESTION`).
 - `RAG_ATTACHMENT_RETRIEVAL_QUERY`: retrieval-only query for attachment extraction (falls back to `RAG_ATTACHMENT_QUESTION`).
+- `RAG_ATTACHMENT_KEYWORD_QUERY`: keyword-only query for BM25; if empty, falls back to retrieval query/question.
 - `RAG_LOG_LEVEL`: application log level (default: `INFO`).
 - `RAG_LOG_REQUESTS`: set to `1` to save provider request logs (currently Bailian, includes request URL).
 - `RAG_LOG_DIR`: directory to save full request logs (default: `data/log`).
@@ -130,6 +131,15 @@ Optional:
 - `RAG_CHUNK_SIZE`: target max chunk length for structured chunking (default: `800`).
 - `RAG_CHUNK_OVERLAP`: overlap used for length-based splits (default: `100`).
 - `RAG_ALPHA`: hybrid retrieval mix (default: `0.7`).
+- `RAG_BM25_ENABLED`: enable BM25 retrieval for hybrid fusion (default: `1`).
+- `RAG_BM25_K1`: BM25 k1 parameter (default: `1.2`).
+- `RAG_BM25_B`: BM25 b parameter (default: `0.75`).
+- `RAG_BM25_MAX_DOC_TOKENS`: cap tokens per doc for BM25 indexing (default: `1024`).
+- `RAG_BM25_FETCH_K`: BM25 candidate pool size (default: `fetch_k`).
+- `RAG_BM25_MAX_QUERY_TOKENS`: cap tokens for BM25 query (default: `128`).
+- `RAG_TOC_FILTER_ENABLED`: enable table-of-contents filtering in retrieval (default: `1`).
+- `RAG_TOC_MIN_LINES`: minimum line count to consider a chunk as TOC-like (default: `5`).
+- `RAG_TOC_LINE_RATIO`: ratio of TOC-like lines to flag a chunk (default: `0.45`).
 - `QDRANT_PATH`: local Qdrant storage path (default: `index/qdrant`).
 - `QDRANT_COLLECTION`: collection name for vectors (default: `contract_approval_rag`).
 - `QDRANT_URL`: connect to a Qdrant server instead of local mode.
@@ -156,6 +166,15 @@ PPOCR_TIMEOUT=60
 RAG_CHUNK_SIZE=800
 RAG_CHUNK_OVERLAP=100
 RAG_ALPHA=0.7
+RAG_BM25_ENABLED=1
+RAG_BM25_K1=1.2
+RAG_BM25_B=0.75
+RAG_BM25_MAX_DOC_TOKENS=1024
+RAG_BM25_FETCH_K=24
+RAG_BM25_MAX_QUERY_TOKENS=128
+RAG_TOC_FILTER_ENABLED=1
+RAG_TOC_MIN_LINES=5
+RAG_TOC_LINE_RATIO=0.45
 QDRANT_PATH=index/qdrant
 QDRANT_COLLECTION=contract_approval_rag
 QUESTION="What is the VAT rate stated in the contract?\nOnly use values explicitly present."
@@ -170,4 +189,27 @@ PPOCR_FILE_FIELD=file
 ```
 
 
-INFO: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:batchEmbedContents "HTTP/1.1 200 OK"
+2026-01-21：本地 BM25 + Qdrant dense
+RAG_BM25_ENABLED: 是否启用 BM25 召回；1 开启、0 关闭。关闭后只走向量检索。
+RAG_BM25_K1: BM25 的 k1 参数，控制词频对分数的影响力度；越大越强调高词频。
+RAG_BM25_B: BM25 的 b 参数，控制文档长度归一化；越大越惩罚长文档。
+RAG_BM25_MAX_DOC_TOKENS: BM25 建索引时每个文档的最大分词数量上限；防止超长文本拖慢索引与检索。
+RAG_BM25_FETCH_K: BM25 候选池大小；越大召回越多，但融合/重排成本也更高。
+RAG_BM25_MAX_QUERY_TOKENS: BM25 查询的最大分词数量上限；防止超长 query 影响速度与噪声。
+
+BM25 使用逻辑（当前实现）
+
+建索引：在 build_or_load_vectorstore 里用已切分的 splits 构建本地 BM25 索引（与向量索引的 chunk 对齐），持久化到 bm25.pkl。
+召回：在 retrieve_documents 里用 BM25 对 keyword_query 或 question 进行检索，取 RAG_BM25_FETCH_K 个候选。
+过滤：BM25 召回后按 process_id + source_type=attachment 过滤，再叠加 scope 过滤（若启用）。
+融合：与向量召回结果合并去重，按 alpha 做归一化线性融合，统一 rerank，最终取 k。
+追踪来源：融合后文档会标记 bm25 / vector 召回来源，便于日志排查。
+注意事项 / 限制
+
+分词策略：中文用 2–3 字 n‑gram，英文用字母数字 token（>1）。不做停用词过滤，短 query 可能噪声偏大。
+上限截断：
+RAG_BM25_MAX_DOC_TOKENS 会截断每个 chunk 的索引 token 数，过低会损失召回。
+RAG_BM25_MAX_QUERY_TOKENS 截断过长 query，避免噪声/慢检索。
+索引一致性：BM25 索引与向量索引必须和当前 chunk 一致；当文档或切分参数变更时需 --rebuild 或删除 index/。
+流程依赖：process_id 缺失会阻止检索；BM25 只对 attachment 生效，不用于表单直取。
+资源占用：BM25 索引常驻内存（docs + postings），大文档集会增加内存和加载时间。
