@@ -67,15 +67,15 @@ python tests/inspect_chunks.py --doc-id-contains "合同12.12.pdf" --limit 3 --m
 Notes:
 - `index/manifest.json` includes `doc_count` for the current collection.
 
-## Local PPOCR
-`src/ppocr_pdf_tool.py` provides local OCR utilities using PaddleOCR:
-- `PdfImageTool` renders PDF pages to PNG bytes.
-- `LocalPPOCRTool` runs OCR on images or PDFs and returns extracted text.
+## Remote OCR service
+OCR is delegated to a FastAPI endpoint that accepts multipart uploads
+(`UploadFile`). The default URL is `http://10.0.22.109:8081/ocr` and can be
+overridden via `OCR_URL`.
 
 Notes:
-- PDF rendering needs either `pymupdf` (fitz) or `pdf2image` + poppler installed.
-- PaddleOCR requires a compatible `paddlepaddle` build for your platform.
-- To enable GPU OCR, install `paddlepaddle-gpu` and set `PPOCR_USE_GPU=1` in `.env`.
+- PDF rendering still uses `pymupdf` (fitz) or `pdf2image` + poppler installed.
+- The client sends images as multipart form data and parses PaddleOCR results
+  from the response payload.
 
 ## Source Processing
 `src/rag-contract.py` reads raw files from `data/source/<process_id>/form|attachment`
@@ -147,21 +147,18 @@ Optional:
 - `QUESTION`: default prompt text when no CLI question is provided.
 - `PROCESS_ID` / `RAG_PROCESS_ID`: process instance ID for metadata filtering (required when multiple process folders exist).
 - `RAG_CREATED_AT` / `CREATED_AT`: optional created_at metadata value.
-- `PPOCR_USE_GPU`: set to `1` to enable GPU OCR when supported (default: off).
-- `PPOCR_URL`: full PPOCR endpoint URL (default: built from base + endpoint).
-- `PPOCR_BASE_URL`: PPOCR base URL (default: `http://10.0.22.109:8001`).
-- `PPOCR_ENDPOINT`: PPOCR path (default: `/ocr`).
-- `PPOCR_REQUEST_FORMAT`: `auto`/`multipart`/`json` (default: `auto`).
-- `PPOCR_TIMEOUT`: request timeout seconds (default: `20`).
-- `PPOCR_FILE_FIELD`: multipart file field name (default: `file`).
-- `PPOCR_IMAGE_PATH`: default image path for PPOCR API tests/requests.
-- `PPOCR_MODE`: OCR backend (`local`/`remote`/`auto`, default: `local`).
+- `OCR_URL`: OCR endpoint URL (default: `http://10.0.22.109:8081/ocr`).
+- `OCR_TIMEOUT`: request timeout seconds (default: `30`).
+- `OCR_FILE_FIELD`: multipart file field name (default: `file`).
+- `OCR_IMAGE_PATH`: default image path for OCR API tests/requests.
+- `OCR_OUTPUT_DIR`: output directory for OCR test results.
 
 Copy-ready example (Google):
 ```bash
 GOOGLE_API_KEY=your_key_here
 GOOGLE_MODEL=gemini-2.5-flash
-PPOCR_TIMEOUT=60
+OCR_URL=http://10.0.22.109:8081/ocr
+OCR_TIMEOUT=30
 
 RAG_CHUNK_SIZE=800
 RAG_CHUNK_OVERLAP=100
@@ -179,13 +176,8 @@ QDRANT_PATH=index/qdrant
 QDRANT_COLLECTION=contract_approval_rag
 QUESTION="What is the VAT rate stated in the contract?\nOnly use values explicitly present."
 PROCESS_ID=your_process_id
-PPOCR_USE_GPU=0
-PPOCR_BASE_URL=http://10.0.22.109:8001
-PPOCR_ENDPOINT=/ocr
-PPOCR_REQUEST_FORMAT=auto
-PPOCR_FILE_FIELD=file
-# PPOCR_URL=http://10.0.22.109:8001/ocr
-# PPOCR_IMAGE_PATH=data/source/sample.png
+OCR_FILE_FIELD=file
+# OCR_IMAGE_PATH=data/source/sample.png
 ```
 
 
