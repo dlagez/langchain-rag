@@ -169,6 +169,45 @@ class RemoteOCRClient:
     def _extract_texts(self, payload: Any) -> list[str]:
         texts: list[str] = []
 
+        def _flatten_rec_texts(value: Any) -> list[str]:
+            if not isinstance(value, (list, tuple)):
+                return []
+            flat: list[str] = []
+            for item in value:
+                if isinstance(item, str):
+                    stripped = item.strip()
+                    if stripped:
+                        flat.append(stripped)
+                    continue
+                if isinstance(item, (list, tuple)) and item:
+                    first = item[0]
+                    if isinstance(first, str):
+                        stripped = first.strip()
+                if stripped:
+                    flat.append(stripped)
+            return flat
+
+        def _find_rec_texts(value: Any) -> tuple[bool, list[str]]:
+            if isinstance(value, dict):
+                if "rec_texts" in value:
+                    return True, _flatten_rec_texts(value.get("rec_texts"))
+                for key in ("res", "result", "data", "output", "outputs", "results", "pages"):
+                    if key in value:
+                        found, found_texts = _find_rec_texts(value[key])
+                        if found:
+                            return True, found_texts
+                return False, []
+            if isinstance(value, list):
+                found_any = False
+                merged: list[str] = []
+                for item in value:
+                    found, found_texts = _find_rec_texts(item)
+                    if found:
+                        found_any = True
+                        merged.extend(found_texts)
+                return found_any, merged
+            return False, []
+
         def _from_line(line: Any) -> str | None:
             if not isinstance(line, (list, tuple)) or len(line) < 2:
                 return None
@@ -202,6 +241,25 @@ class RemoteOCRClient:
                         return
                 for item in value:
                     _walk(item)
+
+        if isinstance(payload, list):
+            merged: list[str] = []
+            found_any = False
+            for item in payload:
+                if isinstance(item, dict) and "rec_texts" in item:
+                    found_any = True
+                    merged.extend(_flatten_rec_texts(item.get("rec_texts")))
+                    continue
+                found, found_texts = _find_rec_texts(item)
+                if found:
+                    found_any = True
+                    merged.extend(found_texts)
+            if found_any:
+                return merged
+
+        found, rec_texts = _find_rec_texts(payload)
+        if found:
+            return rec_texts
 
         _walk(payload)
         return texts

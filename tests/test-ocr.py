@@ -9,6 +9,9 @@ ocr = PaddleOCR(
 result = ocr.predict(
     input=r"D:\code3\langchain-rag\data\source\S5819\form\PixPin_2025-12-04_10-03-02.jpg")
 
+print("type(res)=", type(result), "len=", len(result) if isinstance(result, list) else "NA")
+
+
 # Visualize the results and save the JSON results
 for res in result:
     res.print()
