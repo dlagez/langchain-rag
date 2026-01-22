@@ -21,3 +21,5 @@ data/
 ppocr_results/
 
 index/manifest.json
+
+output/
