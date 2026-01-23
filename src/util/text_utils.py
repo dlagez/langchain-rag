@@ -9,7 +9,7 @@ def _garbled_score(text: str) -> int:
     score = 0
     for ch in text:
         code = ord(ch)
-        if ch == "�":
+        if ch == "\ufffd":
             score += 2
         elif 0x00C0 <= code <= 0x00FF:
             score += 1

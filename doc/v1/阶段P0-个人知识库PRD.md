@@ -22,11 +22,20 @@
 ### 2.3 切分与索引
 - 结构化切分优先，长度兜底（chunk_size + overlap）。
 - 向量索引 + BM25 混合检索。
+- Embedding 优先走本地服务（OpenAI 兼容 `/v1/embeddings`），配置：
+  - `LOCAL_EMBEDDING_BASE_URL`
+  - `LOCAL_EMBEDDING_MODEL`
+- 通过 `EMBEDDING_PROVIDER` 控制 Embedding 使用：
+  - `EMBEDDING_PROVIDER=local`：使用本地 Embedding
+  - `EMBEDDING_PROVIDER=bailian`：使用 Bailian Embedding
+  - 未设置时默认：本地配置存在则用本地，否则回退 Bailian。
 
 ### 2.4 检索与问答
 - Top-K 检索，回答带引用（文件名 + 页码/段落）。
 - 引用包含 `source_deleted` 字段。
 - 未命中时返回“无法从知识库中找到依据”。
+- 通过 `LLM_PROVIDER` 控制问答模型使用：
+  - `LLM_PROVIDER=bailian`：使用 Bailian 生成回答。
 
 ### 2.5 增量策略（与 8.1 口径一致）
 - 新增文件：追加索引。

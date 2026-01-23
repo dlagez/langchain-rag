@@ -8,6 +8,7 @@ from typing import Any
 from urllib import error, request
 
 from .ocr_common import _env_first
+from .prompt_logger import log_event
 
 
 class RemoteOCRClient:
@@ -56,19 +57,51 @@ class RemoteOCRClient:
             headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
             method="POST",
         )
+        request_info = {
+            "url": self._url,
+            "timeout": self._timeout,
+            "file_field": self._file_field,
+            "filename": filename,
+            "mime": mime,
+            "bytes_len": len(image_bytes),
+        }
         try:
             with request.urlopen(req, timeout=self._timeout) as resp:
                 raw = resp.read().decode("utf-8", errors="replace")
         except error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
+            log_event(
+                "ocr",
+                request=request_info,
+                response={"status": exc.code, "raw": detail},
+                error=f"OCR HTTP {exc.code}",
+            )
             raise RuntimeError(f"OCR HTTP {exc.code}: {detail}") from exc
         except Exception as exc:
+            log_event(
+                "ocr",
+                request=request_info,
+                response=None,
+                error=str(exc),
+            )
             raise RuntimeError(f"OCR request failed: {exc}") from exc
 
         try:
-            return json.loads(raw)
+            payload = json.loads(raw)
         except json.JSONDecodeError as exc:
+            log_event(
+                "ocr",
+                request=request_info,
+                response={"raw": raw},
+                error="invalid_json",
+            )
             raise RuntimeError("OCR server returned invalid JSON.") from exc
+        log_event(
+            "ocr",
+            request=request_info,
+            response=payload,
+        )
+        return payload
 
     def _extract_texts(self, payload: Any) -> list[str]:
         texts: list[str] = []
