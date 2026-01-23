@@ -352,6 +352,8 @@ def _infer_process_id_from_fields(
     return None
 
 
+# 会根据路径里的目录名判断是否“表单/附件”（form/forms/表单 或 attachment/attachments/附件），
+# 然后把附件拆成段落并打上 metadata.source_type="attachment"、metadata.filename、metadata.process_id。
 def _build_contract_documents(
     raw_docs: list[Document],
     source_dir: Path,

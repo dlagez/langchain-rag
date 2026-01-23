@@ -159,7 +159,92 @@ def main() -> None:
         len(attachment_docs),
     )
     selector = ContractAttachmentSelector()
-    contract_names = selector.select_contract_names(attachment_docs, top_k=1)
+    contract_names, selector_report = selector.select_contract_names_with_report(
+        attachment_docs, top_k=1
+    )
+    try:
+        selector_log_dir = root / "log" / active_process_id
+        selector_log_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        selector_log_path = (
+            selector_log_dir / f"attachment_selector_{timestamp}.log"
+        )
+        lines = [
+            f"process_id: {active_process_id}",
+            f"selected: {', '.join(contract_names) if contract_names else '<none>'}",
+            f"candidates: {len(selector_report)}",
+            "",
+        ]
+
+        def _join_terms(value: object) -> str:
+            if value is None:
+                return "<none>"
+            if isinstance(value, (list, tuple)):
+                return ", ".join(str(item) for item in value) or "<none>"
+            return str(value)
+
+        def _sort_key(item: dict[str, object]) -> tuple[int, int, int]:
+            score = item.get("score")
+            name = str(item.get("name") or "")
+            if score is None:
+                return (1, 0, len(name))
+            try:
+                score_val = int(score)
+            except (TypeError, ValueError):
+                score_val = 0
+            return (0, -score_val, len(name))
+
+        for item in sorted(selector_report, key=_sort_key):
+            name = str(item.get("name") or "")
+            score = item.get("score")
+            lines.append(f"- name: {name}")
+            lines.append(
+                f"  score: {score if score is not None else 'excluded'}"
+            )
+            lines.append(
+                f"  excluded_by_name: {item.get('excluded_by_name')}"
+            )
+            lines.append(
+                f"  name_exclude_terms: {_join_terms(item.get('name_exclude_terms'))}"
+            )
+            lines.append(
+                f"  strong_name_terms: {_join_terms(item.get('strong_name_terms'))}"
+            )
+            lines.append(
+                f"  name_contains_contract: {item.get('name_contains_contract')}"
+            )
+            lines.append(
+                f"  has_party_pair: {item.get('has_party_pair')}"
+            )
+            lines.append(
+                f"  head_terms: {_join_terms(item.get('head_terms'))}"
+            )
+            lines.append(
+                f"  clause_hits: {item.get('clause_hits')}"
+            )
+            lines.append(
+                f"  clause_bonus: {item.get('clause_bonus')}"
+            )
+            lines.append(
+                f"  tail_terms: {_join_terms(item.get('tail_terms'))}"
+            )
+            lines.append(
+                f"  penalty_terms: {_join_terms(item.get('penalty_terms'))}"
+            )
+            lines.append(
+                f"  penalty_weight: {item.get('penalty_weight')}"
+            )
+            lines.append(
+                "  head_len: "
+                f"{item.get('head_len')} tail_len: {item.get('tail_len')}"
+            )
+            lines.append("")
+        selector_log_path.write_text(
+            "\n".join(lines).rstrip() + "\n", encoding="utf-8"
+        )
+        logging.info("Attachment selector log: %s", selector_log_path)
+    except Exception as exc:
+        logging.warning("Failed to write attachment selector log: %s", exc)
     if contract_names:
         attachment_docs = [
             doc

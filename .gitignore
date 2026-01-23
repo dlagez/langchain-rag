@@ -21,6 +21,8 @@ data/
 ppocr_results/
 
 index/manifest.json
+index/bm25.pkl
 index/
+log/
 
 output/

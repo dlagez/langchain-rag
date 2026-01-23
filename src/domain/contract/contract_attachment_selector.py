@@ -55,7 +55,10 @@ class _ContractCandidate:
     head_text: str
     tail_text: str
 
-
+# 把所有附件按“文件名”分组，抽取每个文件的“头部/尾部”文本，然后按一组合同特征打分
+# 文件名包含“合同”、头部出现甲乙方/合同字段、条款编号、尾部签章等；
+# 文件名/内容命中排除词会扣分或直接剔除）。
+# 没有最低分阈值：只要不被排除，就会进候选，即使得分是 0 或负数也会被选为 top_k（默认 1）。
 class ContractAttachmentSelector:
     def __init__(
         self,
@@ -78,17 +81,30 @@ class ContractAttachmentSelector:
         *,
         top_k: int = 1,
     ) -> list[str]:
+        names, _ = self.select_contract_names_with_report(
+            docs, top_k=top_k
+        )
+        return names
+
+    def select_contract_names_with_report(
+        self,
+        docs: list[Document],
+        *,
+        top_k: int = 1,
+    ) -> tuple[list[str], list[dict[str, object]]]:
         candidates = self._build_candidates(docs)
         scored: list[tuple[int, str]] = []
+        report: list[dict[str, object]] = []
         for candidate in candidates:
-            score = self._score_candidate(candidate)
+            score, detail = self._score_candidate_detail(candidate)
+            report.append(detail)
             if score is None:
                 continue
             scored.append((score, candidate.name))
         if not scored or top_k <= 0:
-            return []
+            return [], report
         scored.sort(key=lambda item: (-item[0], len(item[1])))
-        return [name for _, name in scored[:top_k]]
+        return [name for _, name in scored[:top_k]], report
 
     def _build_candidates(self, docs: list[Document]) -> list[_ContractCandidate]:
         grouped: dict[str, list[tuple[tuple[int, int, int], Document]]] = {}
@@ -227,6 +243,85 @@ class ContractAttachmentSelector:
 
         return score
 
+    def _score_candidate_detail(
+        self, candidate: _ContractCandidate
+    ) -> tuple[int | None, dict[str, object]]:
+        name = candidate.name
+        name_exclude_terms = self._match_terms(name, _NAME_EXCLUDE_TERMS)
+        head = candidate.head_text
+        tail = candidate.tail_text
+        combined = "\n".join(item for item in (head, tail) if item)
+        detail: dict[str, object] = {
+            "name": name,
+            "score": None,
+            "excluded_by_name": bool(name_exclude_terms),
+            "name_exclude_terms": name_exclude_terms,
+            "head_len": len(head),
+            "tail_len": len(tail),
+        }
+        if name_exclude_terms:
+            return None, detail
+
+        score = 0
+        strong_name_terms = self._match_terms(name, _NAME_STRONG_TERMS)
+        strong_name_hits = len(strong_name_terms)
+        if strong_name_hits:
+            score += min(strong_name_hits, 2) * 6
+        elif "鍚堝悓" in name:
+            score += 2
+
+        has_party_pair = self._has_party_pair(head)
+        if has_party_pair:
+            score += 10
+
+        head_terms = self._match_terms(head, _HEAD_FIELDS)
+        score += len(head_terms) * 3
+
+        clause_hits = len(_CLAUSE_RE.findall(combined))
+        clause_bonus = 0
+        if clause_hits >= 3:
+            clause_bonus += 4
+        if clause_hits >= 6:
+            clause_bonus += 3
+        if clause_hits >= 10:
+            clause_bonus += 6
+        if clause_hits >= 20:
+            clause_bonus += 6
+        if clause_hits >= 40:
+            clause_bonus += 6
+        score += clause_bonus
+
+        tail_terms = self._match_terms(tail, _TAIL_SIGN_TERMS)
+        if tail_terms:
+            score += min(len(tail_terms), 4) * 2
+            if len(tail_terms) >= 3:
+                score += 4
+
+        penalty_terms = self._match_terms(combined, _NAME_EXCLUDE_TERMS)
+        penalty_weight = 5
+        if clause_hits >= 10 or (strong_name_hits and clause_hits >= 3):
+            penalty_weight = 1
+        elif clause_hits >= 3:
+            penalty_weight = 2
+        if penalty_terms:
+            score -= len(penalty_terms) * penalty_weight
+
+        detail.update(
+            {
+                "score": score,
+                "strong_name_terms": strong_name_terms,
+                "name_contains_contract": "鍚堝悓" in name,
+                "has_party_pair": has_party_pair,
+                "head_terms": head_terms,
+                "clause_hits": clause_hits,
+                "clause_bonus": clause_bonus,
+                "tail_terms": tail_terms,
+                "penalty_terms": penalty_terms,
+                "penalty_weight": penalty_weight,
+            }
+        )
+        return score, detail
+
     def _has_party_pair(self, text: str) -> bool:
         if not text:
             return False
@@ -258,3 +353,9 @@ class ContractAttachmentSelector:
     @staticmethod
     def _count_hits(text: str, terms: tuple[str, ...]) -> int:
         return sum(1 for term in terms if term in text)
+
+    @staticmethod
+    def _match_terms(text: str, terms: tuple[str, ...]) -> list[str]:
+        if not text:
+            return []
+        return [term for term in terms if term in text]
