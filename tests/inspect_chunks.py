@@ -64,6 +64,10 @@ def _parse_args() -> argparse.Namespace:
         help="Override QDRANT_COLLECTION.",
     )
     parser.add_argument(
+        "--kb",
+        help="KB id (used to locate local Qdrant path and remote collection name).",
+    )
+    parser.add_argument(
         "--list-doc-ids",
         action="store_true",
         help="List unique doc_id values then exit.",
@@ -146,12 +150,23 @@ def main() -> None:
     load_dotenv()
     args = _parse_args()
 
-    collection = (
-        args.collection
-        or os.getenv("QDRANT_COLLECTION")
-        or "contract_approval_rag"
-    )
-    client = _get_qdrant_client(ROOT / "index")
+    base_collection = os.getenv("QDRANT_COLLECTION") or "kb_chunks"
+    use_remote = bool(os.getenv("QDRANT_URL"))
+    if args.collection:
+        collection = args.collection
+    elif use_remote and args.kb:
+        collection = f"{base_collection}_{args.kb}"
+    else:
+        collection = base_collection
+
+    if use_remote:
+        client = _get_qdrant_client(ROOT / "index")
+    else:
+        if args.kb:
+            qdrant_root = ROOT / "index" / args.kb
+        else:
+            qdrant_root = ROOT / "index"
+        client = _get_qdrant_client(qdrant_root)
     total = _count_points(client, collection)
     if total is not None:
         print(f"Total chunks (collection count): {total}")
@@ -320,17 +335,4 @@ def main() -> None:
 if __name__ == "__main__":
     main()
 
-# python tests/inspect_chunks.py --list-doc-ids 列出所有doc-id
-# python tests/inspect_chunks.py --limit 1 --max-chars 400
-# python tests/inspect_chunks.py --source-contains 合同 --limit 3 --max-chars 0
-# python tests/inspect_chunks.py --chunk-id 0 --max-chars 400
-# python tests/inspect_chunks.py --point-id 100 --collection rag_docs
-# python tests/inspect_chunks.py --doc-id "attachment/高新三路声环境提升工程预留段建设项目工程总承包（EPC）项目合同12.12.pdf" --limit 3 --max-chars 0
-# python tests/inspect_chunks.py --doc-id-contains "合同12.12.pdf" --limit 3 --max-chars 0
-# python tests/inspect_chunks.py --doc-id-contains "总承包合同.pdf" --limit 3 --max-chars 0
-
-
-
-# --source-contains 合同 只看文件名包含“合同”的 chunk
-# --collection your_collection 覆盖 QDRANT_COLLECTION
-# --batch-size 100 调整 scroll 批大小
+# python tests/inspect_chunks.py --kb default --collection kb_chunks --source-contains "bug反馈表" --limit 10 --max-chars 400
