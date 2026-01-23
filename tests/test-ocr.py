@@ -1,3 +1,5 @@
+from pathlib import Path
+
 # Initialize PaddleOCR instance
 from paddleocr import PaddleOCR
 ocr = PaddleOCR(
@@ -13,7 +15,9 @@ print("type(res)=", type(result), "len=", len(result) if isinstance(result, list
 
 
 # Visualize the results and save the JSON results
+output_dir = Path(__file__).resolve().parent / "output"
+output_dir.mkdir(parents=True, exist_ok=True)
 for res in result:
     res.print()
-    res.save_to_img("output")
-    res.save_to_json("output")
+    res.save_to_img(str(output_dir))
+    res.save_to_json(str(output_dir))
