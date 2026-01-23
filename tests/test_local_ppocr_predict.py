@@ -4,7 +4,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from util.ocr_utils import LocalPPOCRClient
+from util.local_ppocr import LocalPPOCRClient
 
 
 class TestLocalPPOCRPredict(unittest.TestCase):

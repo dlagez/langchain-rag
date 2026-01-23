@@ -17,7 +17,9 @@ from .extractors import (
     _extract_excel_text,
 )
 from .file_utils import _read_text_with_fallback, _write_text
-from .ocr_utils import LocalPPOCRClient, _LazyOCR, _extract_text_from_file
+from .document_extractor import DocumentTextExtractor
+from .local_ppocr import LocalPPOCRClient
+from .ocr_utils import _LazyOCR, _extract_text_from_file
 from .source_processing import _load_cached_text, process_sources
 from .text_utils import (
     _cjk_count,
@@ -51,6 +53,7 @@ from .vectorstore_utils import (
 
 __all__ = [
     "_LazyOCR",
+    "DocumentTextExtractor",
     "LocalPPOCRClient",
     "_build_index_manifest",
     "_build_bm25_index",

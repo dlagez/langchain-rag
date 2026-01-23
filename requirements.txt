@@ -6,11 +6,13 @@ dashscope==1.25.8
 numpy==1.26.4
 opencv-python==4.10.0.84
 pandas==2.2.2
-paddleocr==3.3.3
-paddlepaddle==3.2.0
 python-docx==1.1.2
 pymupdf==1.26.4
 python-dotenv==1.2.1
 qdrant-client==1.16.2
 xlrd==2.0.1
 openpyxl==3.1.5
+
+# 下面两个包和langchain有冲突，等官方修了bug后再加回来，把ppocr和langchain分开，在另外的服务器开ocr服务。
+# paddleocr==3.3.3
+# paddlepaddle==3.2.0
