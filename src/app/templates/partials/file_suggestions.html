@@ -1,0 +1,20 @@
+{% if suggestions %}
+  {% for name in suggestions %}
+    <button type="button"
+            class="facet"
+            data-name="{{ name }}"
+            onclick="toggleFileFilter(this.dataset.name)">
+      {{ name }}
+    </button>
+  {% endfor %}
+{% elif message %}
+  <div class="empty">{{ message }}</div>
+{% else %}
+  <div class="empty">暂无可推荐文件名</div>
+{% endif %}
+
+<datalist id="file-suggestions" hx-swap-oob="true">
+  {% for name in suggestions %}
+  <option value="{{ name }}"></option>
+  {% endfor %}
+</datalist>

@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from typing import Any
+import re
 
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -64,6 +65,36 @@ def _list_kbs(settings: Settings) -> list[dict[str, Any]]:
     return items
 
 
+def _resolve_kb_ids(settings: Settings, kb_ids: list[str] | str | None) -> list[str]:
+    if kb_ids is None:
+        values: list[str] = []
+    elif isinstance(kb_ids, str):
+        values = [kb_id.strip() for kb_id in kb_ids.split(",") if kb_id.strip()]
+    else:
+        values = [kb_id.strip() for kb_id in kb_ids if kb_id and kb_id.strip()]
+
+    valid: list[str] = []
+    for value in values:
+        manifest_dir = settings.manifest_dir / value
+        if manifest_dir.exists() and manifest_dir.is_dir():
+            valid.append(value)
+
+    if valid:
+        return valid
+
+    items = _list_kbs(settings)
+    if items:
+        return [items[0]["kb_id"]]
+    return []
+
+
+def _default_kb_id(settings: Settings) -> str:
+    items = _list_kbs(settings)
+    if items:
+        return items[0]["kb_id"]
+    return ""
+
+
 def _doc_to_dict(doc) -> dict[str, Any]:
     meta = doc.metadata or {}
     return {
@@ -85,6 +116,168 @@ def _facet_files(docs: list[dict[str, Any]]) -> list[tuple[str, int]]:
         name = Path(str(source)).name if source else "unknown"
         counts[name] = counts.get(name, 0) + 1
     return sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+
+
+_FILE_EXTENSIONS = (
+    "txt",
+    "pdf",
+    "docx",
+    "doc",
+    "xls",
+    "xlsx",
+    "csv",
+    "png",
+    "jpg",
+    "jpeg",
+    "bmp",
+    "tif",
+    "tiff",
+    "webp",
+)
+_FILE_MENTION_RE = re.compile(
+    r"([\w\u4e00-\u9fff\-\.]+\.(" + "|".join(_FILE_EXTENSIONS) + r"))",
+    re.IGNORECASE,
+)
+_TOKEN_RE = re.compile(r"[A-Za-z0-9]+|[\u4e00-\u9fff]+")
+_FILTER_SPLIT_RE = re.compile(r"[,\n;，；|]+")
+
+
+def _question_tokens(question: str) -> list[str]:
+    if not question:
+        return []
+    tokens = []
+    for token in _TOKEN_RE.findall(question):
+        token = token.strip().lower()
+        if len(token) >= 2:
+            tokens.append(token)
+    return tokens
+
+
+def _score_file_name(question: str, file_name: str, tokens: list[str]) -> int:
+    if not question or not file_name:
+        return 0
+    q = question.lower()
+    name = file_name.lower()
+    base = Path(name).stem
+    score = 0
+    if name in q:
+        score += 30
+    if base and base in q:
+        score += 20
+    for token in tokens:
+        if token in base:
+            score += 3
+        elif token in name:
+            score += 1
+    return score
+
+
+def _suggest_file_names(
+    settings: Settings, *, kb_ids: list[str], question: str, limit: int = 8
+) -> tuple[list[str], str | None]:
+    if not kb_ids:
+        return [], "暂无可用文件"
+
+    records: list = []
+    for kb_id in kb_ids:
+        records.extend(load_file_records(settings.manifest_dir, kb_id))
+
+    if not records:
+        return [], "暂无可用文件"
+
+    names: dict[str, str] = {}
+    for record in records:
+        if record.status != "indexed" or record.source_deleted:
+            continue
+        name = Path(record.abs_path).name
+        if not name:
+            continue
+        updated_at = record.updated_at or ""
+        if name not in names or updated_at > names[name]:
+            names[name] = updated_at
+
+    if not names:
+        return [], "暂无可用文件"
+
+    question = question.strip()
+    if not question:
+        return [], "输入问题后自动推荐可过滤的文件名"
+
+    tokens = _question_tokens(question)
+    mentions = {match[0].lower() for match in _FILE_MENTION_RE.findall(question)}
+
+    scored: list[tuple[int, str, str]] = []
+    for name, updated_at in names.items():
+        score = _score_file_name(question, name, tokens)
+        if name.lower() in mentions:
+            score += 50
+        if score > 0:
+            scored.append((score, updated_at, name))
+
+    if not scored:
+        # No obvious match: show latest files to allow manual selection.
+        recent = sorted(names.items(), key=lambda item: item[1], reverse=True)
+        return [name for name, _ in recent[:limit]], "未识别到文件名，以下为最近文件"
+
+    scored.sort(key=lambda item: (-item[0], item[1], item[2]))
+    return [name for _, _, name in scored[:limit]], None
+
+
+def _parse_file_filters(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    parts = [item.strip() for item in _FILTER_SPLIT_RE.split(raw) if item.strip()]
+    if not parts:
+        return []
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in parts:
+        key = item.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(item)
+    return result
+
+
+def _match_any_file_filter(source: str, filters: list[str]) -> bool:
+    if not source or not filters:
+        return False
+    for item in filters:
+        if item in source:
+            return True
+    return False
+
+
+def _retrieve_multi(
+    settings: Settings,
+    *,
+    kb_ids: list[str],
+    question: str,
+    top_k: int | None,
+) -> list[Document]:
+    if not kb_ids:
+        return []
+    if len(kb_ids) == 1:
+        return retrieve_documents(
+            kb_id=kb_ids[0],
+            question=question,
+            settings=settings,
+            top_k=top_k,
+        )
+    k_total = top_k or settings.top_k
+    per_k = max(1, int((k_total + len(kb_ids) - 1) / len(kb_ids)))
+    docs: list[Document] = []
+    for kb_id in kb_ids:
+        docs.extend(
+            retrieve_documents(
+                kb_id=kb_id,
+                question=question,
+                settings=settings,
+                top_k=per_k,
+            )
+        )
+    return docs[:k_total]
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -138,13 +331,15 @@ def ingest_action(
 @app.get("/query", response_class=HTMLResponse)
 def query_page(request: Request, kb_id: str | None = None) -> HTMLResponse:
     settings = _settings()
+    default_kb = _default_kb_id(settings)
     kb_list = _list_kbs(settings)
-    kb_id = kb_id or (kb_list[0]["kb_id"] if kb_list else "")
     return templates.TemplateResponse(
         "query.html",
         {
             "request": request,
-            "kb_id": kb_id,
+            "default_kb_id": default_kb,
+            "kbs": kb_list,
+            "default_top_k": settings.top_k,
         },
     )
 
@@ -152,27 +347,52 @@ def query_page(request: Request, kb_id: str | None = None) -> HTMLResponse:
 @app.post("/search", response_class=HTMLResponse)
 def search_action(
     request: Request,
-    kb_id: str = Form(...),
+    kb_id: list[str] | None = Form(None),
     question: str = Form(...),
     top_k: int = Form(0),
     file_name: str | None = Form(None),
 ) -> HTMLResponse:
     settings = _settings()
+    kb_ids = _resolve_kb_ids(settings, kb_id)
+    if not kb_ids:
+        return templates.TemplateResponse(
+            "partials/results.html",
+            {
+                "request": request,
+                "answer": "尚未发现可用知识库，请先入库。",
+                "citations": [],
+                "docs": [],
+                "facets": [],
+                "kb_id": "",
+                "question": question,
+            },
+        )
     top_k_value = top_k or None
-    docs = retrieve_documents(kb_id=kb_id, question=question, settings=settings, top_k=top_k_value)
+    docs = _retrieve_multi(
+        settings,
+        kb_ids=kb_ids,
+        question=question,
+        top_k=top_k_value,
+    )
 
-    if file_name:
-        lowered = file_name.strip().lower()
-        if lowered:
-            docs = [
-                doc
-                for doc in docs
-                if lowered in str(Path((doc.metadata or {}).get("source") or "")).lower()
-            ]
+    filters = _parse_file_filters(file_name)
+    if filters:
+        lowered_filters = [item.lower() for item in filters]
+        docs = [
+            doc
+            for doc in docs
+            if _match_any_file_filter(
+                str(Path((doc.metadata or {}).get("source") or "")).lower(),
+                lowered_filters,
+            )
+        ]
 
     doc_dicts = [_doc_to_dict(doc) for doc in docs]
 
-    file_records = {r.abs_path: r for r in load_file_records(settings.manifest_dir, kb_id)}
+    file_records: dict[str, Any] = {}
+    for kb in kb_ids:
+        for record in load_file_records(settings.manifest_dir, kb):
+            file_records[record.abs_path] = record
     result = answer_question(
         question=question,
         docs=docs,
@@ -192,6 +412,28 @@ def search_action(
             "facets": facets,
             "kb_id": kb_id,
             "question": question,
+        },
+    )
+
+
+@app.get("/suggest_files", response_class=HTMLResponse)
+def suggest_files(
+    request: Request,
+    kb_id: list[str] | None = None,
+    question: str = "",
+    limit: int = 8,
+) -> HTMLResponse:
+    settings = _settings()
+    kb_ids = _resolve_kb_ids(settings, kb_id)
+    suggestions, message = _suggest_file_names(
+        settings, kb_ids=kb_ids, question=question, limit=limit
+    )
+    return templates.TemplateResponse(
+        "partials/file_suggestions.html",
+        {
+            "request": request,
+            "suggestions": suggestions,
+            "message": message,
         },
     )
 

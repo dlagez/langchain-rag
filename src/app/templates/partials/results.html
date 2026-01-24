@@ -14,10 +14,11 @@
 </div>
 
 <div class="card">
-  <h2>证据片段</h2>
+  <h2>证据片段{% if docs %}（{{ docs | length }}）{% endif %}</h2>
   {% if docs %}
     {% for doc in docs %}
       <div class="snippet">
+        <div class="snippet-count">片段 {{ loop.index }}/{{ docs | length }}</div>
         <div class="snippet-meta">
           <span class="tag">{{ doc.source_type or "" }}</span>
           <span class="name">{{ doc.source | default("unknown") }}</span>
@@ -33,7 +34,7 @@
   {% endif %}
 </div>
 
-<div id="facet-box" class="facet-list" hx-swap-oob="true">
+<div id="available-files" class="facet-list" hx-swap-oob="true">
   {% if facets %}
     {% for name, count in facets %}
       <button class="facet"
@@ -41,7 +42,8 @@
               hx-include="#search-form"
               hx-target="#results"
               hx-swap="innerHTML"
-              onclick="document.querySelector('#search-form input[name=file_name]').value='{{ name }}'">
+              data-name="{{ name }}"
+              onclick="toggleFileFilter(this.dataset.name)">
         {{ name }} ({{ count }})
       </button>
     {% endfor %}

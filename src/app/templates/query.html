@@ -1,11 +1,67 @@
-﻿{% extends "base.html" %}
+{% extends "base.html" %}
 {% block content %}
-<section class="query-layout">
+<form id="search-form"
+      class="query-layout"
+      hx-post="/search"
+      hx-target="#results"
+      hx-swap="innerHTML"
+      hx-indicator="#ask-indicator"
+      hx-on:htmx:beforeRequest="document.getElementById('ask-btn').disabled=true; document.getElementById('ask-status').textContent='正在回答...';"
+      hx-on:htmx:afterRequest="document.getElementById('ask-btn').disabled=false; document.getElementById('ask-status').textContent='';">
+  <script>
+    function toggleFileFilter(name) {
+      var input = document.getElementById('file-name-input');
+      if (!input) return;
+      var raw = input.value || '';
+      var items = raw.split(/[,，;；|\n]+/).map(function (v) { return v.trim(); }).filter(Boolean);
+      var idx = items.indexOf(name);
+      if (idx >= 0) {
+        items.splice(idx, 1);
+      } else {
+        items.push(name);
+      }
+      input.value = items.join(', ');
+      syncSelectedFiles();
+    }
+
+    function syncSelectedFiles() {
+      var list = document.getElementById('selected-files');
+      var input = document.getElementById('file-name-input');
+      if (!list || !input) return;
+      var raw = input.value || '';
+      var items = raw.split(/[,，;；|\n]+/).map(function (v) { return v.trim(); }).filter(Boolean);
+      list.innerHTML = '';
+      if (!items.length) {
+        var empty = document.createElement('div');
+        empty.className = 'empty';
+        empty.textContent = '未选择文件';
+        list.appendChild(empty);
+        return;
+      }
+      items.forEach(function (name) {
+        var pill = document.createElement('button');
+        pill.type = 'button';
+        pill.className = 'selected-pill';
+        pill.textContent = name;
+        pill.onclick = function () { toggleFileFilter(name); };
+        list.appendChild(pill);
+      });
+    }
+
+    window.addEventListener('DOMContentLoaded', syncSelectedFiles);
+  </script>
   <aside class="side">
     <div class="card">
-      <h2>过滤器</h2>
-      <p class="muted">点击文件名快速过滤</p>
-      <div id="facet-box" class="facet-list">
+      <h2>文件筛选</h2>
+      <p class="muted">点击文件名可多选过滤</p>
+      <div id="selected-files" class="selected-list">
+        <div class="empty">未选择文件</div>
+      </div>
+      <div class="filter-divider"></div>
+      <div class="filter-label">可选文件</div>
+      <input id="file-name-input" type="hidden" name="file_name" value="" />
+      <datalist id="file-suggestions"></datalist>
+      <div id="available-files" class="facet-list">
         <div class="empty">暂无结果</div>
       </div>
     </div>
@@ -13,33 +69,66 @@
 
   <section class="main">
     <div class="card">
-      <h1>知识库检索</h1>
-      <form id="search-form" class="form" hx-post="/search" hx-target="#results" hx-swap="innerHTML">
-        <label>
-          <span>KB ID</span>
-          <input type="text" name="kb_id" value="{{ kb_id }}" required />
-        </label>
+      <h1>RAG 智能问答</h1>
+      <div class="form">
+        <div class="kb-select">
+          <div class="filter-label">KB ID（可选，可多选）</div>
+          <div class="kb-options"
+               hx-get="/suggest_files"
+               hx-trigger="change delay:200ms"
+               hx-include="#search-form"
+               hx-target="#available-files"
+               hx-swap="innerHTML">
+            {% if kbs %}
+              {% for kb in kbs %}
+              <label class="kb-option">
+                <input type="checkbox" name="kb_id" value="{{ kb.kb_id }}" />
+                <span>{{ kb.kb_id }}</span>
+              </label>
+              {% endfor %}
+            {% else %}
+              <div class="muted">暂无可选 KB</div>
+            {% endif %}
+          </div>
+          {% if default_kb_id %}
+          <div class="muted">未选择时默认：{{ default_kb_id }}</div>
+          {% endif %}
+        </div>
         <label>
           <span>问题</span>
-          <input type="text" name="question" placeholder="请输入问题" required />
+          <textarea name="question"
+                    placeholder="请输入问题"
+                    rows="4"
+                    required
+                    hx-get="/suggest_files"
+                    hx-trigger="keyup changed delay:400ms"
+                    hx-include="#search-form"
+                    hx-target="#available-files"
+                    hx-swap="innerHTML"></textarea>
         </label>
         <div class="row">
           <label>
             <span>Top-K</span>
-            <input type="number" name="top_k" placeholder="0=默认" min="0" />
-          </label>
-          <label>
-            <span>文件名过滤（可选）</span>
-            <input type="text" name="file_name" placeholder="bug反馈表.xlsx" />
+            <input type="number"
+                   name="top_k"
+                   placeholder="默认 {{ default_top_k }}"
+                   min="0" />
           </label>
         </div>
-        <button class="btn" type="submit">检索</button>
-      </form>
+        <div class="action-row">
+          <button id="ask-btn" class="btn" type="submit">向大模型提问</button>
+          <div id="ask-indicator" class="ask-indicator htmx-indicator" aria-live="polite">
+            <span class="spinner"></span>
+            <span>正在回答...</span>
+          </div>
+        </div>
+        <div id="ask-status" class="muted"></div>
+      </div>
     </div>
 
     <div id="results" class="results">
       <div class="card empty">尚未检索</div>
     </div>
   </section>
-</section>
+</form>
 {% endblock %}
