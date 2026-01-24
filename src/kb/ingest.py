@@ -70,7 +70,7 @@ def ingest_kb(root_path: Path, *, kb_id: str | None, settings: Settings) -> str:
 
     kb_id = resolve_kb_id(root_path, settings.manifest_dir, kb_id=kb_id)
 
-    configure_logging(settings.log_dir, kb_id, level=_log_level_from_env())
+    configure_logging(settings.manifest_dir, kb_id, level=_log_level_from_env())
 
     report = new_ingest_report(kb_id, str(root_path))
 

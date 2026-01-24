@@ -11,7 +11,7 @@ from kb.index import bm25_search, get_client_and_collection
 from providers.embed_bailian import embed_texts as embed_bailian
 from providers.embed_local import embed_texts as embed_local
 from util.document_utils import _doc_signature
-from util.prompt_logger import log_embedding_call
+from util.prompt_logger import log_embedding_call, log_retrieval_event
 from util.vectorstore_utils import _docs_from_search_results, _fusion_rerank, _search_qdrant
 
 
@@ -49,8 +49,8 @@ def _merge_results(
     dense_scores = [item["dense"] for item in combined.values()]
     sparse_scores = [item["sparse"] for item in combined.values()]
 
-    reranked, _ = _fusion_rerank(docs, dense_scores, sparse_scores, k, alpha)
-    return reranked
+    reranked, scores = _fusion_rerank(docs, dense_scores, sparse_scores, k, alpha)
+    return reranked, scores
 
 
 def retrieve_documents(
@@ -79,6 +79,16 @@ def retrieve_documents(
     vector_docs, vector_scores = _docs_from_search_results(results)
 
     if not settings.bm25_enabled:
+        log_retrieval_event(
+            kb_id=kb_id,
+            query=query,
+            top_k=k,
+            fetch_k=fetch_k,
+            vector_hits=_format_hits(vector_docs, vector_scores),
+            bm25_hits=[],
+            merged_hits=_format_hits(vector_docs[:k], vector_scores[:k]),
+            filter_info={"kb_id": kb_id},
+        )
         return vector_docs[:k]
 
     bm25_docs, bm25_scores = bm25_search(
@@ -87,7 +97,20 @@ def retrieve_documents(
         fetch_k,
         settings=settings,
     )
-    return _merge_results(vector_docs, vector_scores, bm25_docs, bm25_scores, alpha=settings.alpha, k=k)
+    merged_docs, merged_scores = _merge_results(
+        vector_docs, vector_scores, bm25_docs, bm25_scores, alpha=settings.alpha, k=k
+    )
+    log_retrieval_event(
+        kb_id=kb_id,
+        query=query,
+        top_k=k,
+        fetch_k=fetch_k,
+        vector_hits=_format_hits(vector_docs, vector_scores),
+        bm25_hits=_format_hits(bm25_docs, bm25_scores),
+        merged_hits=_format_hits(merged_docs, merged_scores),
+        filter_info={"kb_id": kb_id},
+    )
+    return merged_docs
 
 
 def _embed_query(query: str, settings: Settings) -> list[float]:
@@ -150,3 +173,27 @@ def _embed_query(query: str, settings: Settings) -> list[float]:
         )
         return vectors[0]
     raise SystemExit(f"Unsupported EMBEDDING_PROVIDER: {provider}")
+
+
+def _format_hits(docs: list[Document], scores) -> list[dict]:
+    hits: list[dict] = []
+    for idx, doc in enumerate(docs):
+        score = None
+        if scores is not None and idx < len(scores):
+            try:
+                score = float(scores[idx])
+            except Exception:
+                score = None
+        meta = doc.metadata or {}
+        hits.append(
+            {
+                "source": meta.get("source"),
+                "doc_id": meta.get("doc_id"),
+                "chunk_id": meta.get("chunk_id"),
+                "page": meta.get("page"),
+                "sheet": meta.get("sheet"),
+                "row": meta.get("row"),
+                "score": score,
+            }
+        )
+    return hits

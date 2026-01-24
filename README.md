@@ -55,10 +55,9 @@ Control providers via env:
 - OCR uses a remote service via `OCR_URL` (multipart upload, default field `file`).
 
 ## Storage layout
-- `data/manifest/<kb_id>/` : file status + ingest report
+- `data/manifest/<kb_id>/` : file status + ingest report + ingest.log
 - `data/processed/<kb_id>/` : parsed text
 - `index/<kb_id>/` : Qdrant + BM25 index
-- `data/log/<kb_id>/` : ingest logs
 
 ## Metadata fields (keep in sync with code)
 These fields are stored in chunk metadata and/or payload. When you add or change
@@ -97,6 +96,7 @@ OCR_FILE_FIELD=file
 
 # Prompt logging
 PROMPT_LOG_EMBEDDING=1
+PROMPT_LOG_RETRIEVAL=1
 
 # Chunking / BM25 / Qdrant
 RAG_CHUNK_SIZE=800

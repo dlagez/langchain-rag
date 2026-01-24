@@ -55,6 +55,10 @@ def should_log_embedding() -> bool:
     return _env_bool("PROMPT_LOG_EMBEDDING", True)
 
 
+def should_log_retrieval() -> bool:
+    return _env_bool("PROMPT_LOG_RETRIEVAL", True)
+
+
 def log_event(
     kind: str,
     *,
@@ -100,3 +104,31 @@ def log_embedding_call(
         response=response_payload,
         error=error,
     )
+
+
+def log_retrieval_event(
+    *,
+    kb_id: str,
+    query: str,
+    top_k: int,
+    fetch_k: int,
+    vector_hits: list[dict],
+    bm25_hits: list[dict],
+    merged_hits: list[dict],
+    filter_info: dict | None = None,
+) -> Path | None:
+    if not should_log_retrieval():
+        return None
+    request_payload = {
+        "kb_id": kb_id,
+        "query": query,
+        "top_k": top_k,
+        "fetch_k": fetch_k,
+        "filter": filter_info or {},
+    }
+    response_payload = {
+        "vector_hits": vector_hits,
+        "bm25_hits": bm25_hits,
+        "merged_hits": merged_hits,
+    }
+    return log_event("retrieval", request=request_payload, response=response_payload)
