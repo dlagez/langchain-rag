@@ -1,0 +1,30 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Personal KB</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+</head>
+<body>
+  <header class="site-header">
+    <div class="brand">
+      <div class="brand-mark">KB</div>
+      <div class="brand-text">
+        <div class="title">Personal Knowledge Base</div>
+        <div class="subtitle">FastAPI · Jinja2 · HTMX</div>
+      </div>
+    </div>
+    <nav class="nav">
+      <a href="/kb">KB 列表</a>
+      <a href="/ingest">入库</a>
+      <a href="/query">检索</a>
+    </nav>
+  </header>
+
+  <main class="page">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

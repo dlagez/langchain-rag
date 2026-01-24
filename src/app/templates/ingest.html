@@ -1,0 +1,18 @@
+﻿{% extends "base.html" %}
+{% block content %}
+<section class="card">
+  <h1>入库</h1>
+  <p class="muted">选择绝对路径并开始入库。</p>
+  <form class="form" method="post" action="/ingest">
+    <label>
+      <span>KB ID（可选）</span>
+      <input type="text" name="kb_id" value="{{ kb_id }}" placeholder="如：default" />
+    </label>
+    <label>
+      <span>根目录路径</span>
+      <input type="text" name="root_path" placeholder="D:\\docs\\projectA" required />
+    </label>
+    <button class="btn" type="submit">开始入库</button>
+  </form>
+</section>
+{% endblock %}

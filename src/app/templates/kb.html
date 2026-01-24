@@ -1,0 +1,32 @@
+﻿{% extends "base.html" %}
+{% block content %}
+<section class="card">
+  <h1>知识库列表</h1>
+  <p class="muted">当前已创建的 KB 及其索引状态。</p>
+  <div class="kb-grid">
+    {% if kbs %}
+      {% for kb in kbs %}
+      <div class="kb-card">
+        <div class="kb-title">{{ kb.kb_id }}</div>
+        <div class="kb-meta">文档数：{{ kb.doc_count or '-' }}</div>
+        <div class="kb-meta">Chunk 数：{{ kb.chunk_count or '-' }}</div>
+        <div class="kb-meta">更新时间：{{ kb.updated_at or '-' }}</div>
+        {% if kb.roots %}
+        <div class="kb-roots">
+          {% for root in kb.roots %}
+            <div class="kb-root">{{ root }}</div>
+          {% endfor %}
+        </div>
+        {% endif %}
+        <div class="kb-actions">
+          <a class="btn" href="/query?kb_id={{ kb.kb_id }}">进入检索</a>
+          <a class="btn ghost" href="/ingest?kb_id={{ kb.kb_id }}">重新入库</a>
+        </div>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="empty">暂无 KB，请先入库。</div>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

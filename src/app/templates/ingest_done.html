@@ -1,0 +1,12 @@
+﻿{% extends "base.html" %}
+{% block content %}
+<section class="card">
+  <h1>入库完成</h1>
+  <p>KB：<strong>{{ kb_id }}</strong></p>
+  <p>路径：<strong>{{ root_path }}</strong></p>
+  <div class="kb-actions">
+    <a class="btn" href="/query?kb_id={{ kb_id }}">进入检索</a>
+    <a class="btn ghost" href="/kb">返回列表</a>
+  </div>
+</section>
+{% endblock %}

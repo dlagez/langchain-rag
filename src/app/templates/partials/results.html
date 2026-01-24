@@ -1,0 +1,51 @@
+﻿<div class="card">
+  <h2>回答</h2>
+  <p class="answer">{{ answer }}</p>
+  {% if citations %}
+  <div class="citations">
+    <h3>引用</h3>
+    <ul>
+      {% for cite in citations %}
+      <li>{{ cite.source }}{% if cite.page %}#p{{ cite.page }}{% endif %}{% if cite.source_deleted %} (source_deleted){% endif %}</li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>证据片段</h2>
+  {% if docs %}
+    {% for doc in docs %}
+      <div class="snippet">
+        <div class="snippet-meta">
+          <span class="tag">{{ doc.source_type or "" }}</span>
+          <span class="name">{{ doc.source | default("unknown") }}</span>
+          {% if doc.sheet %}<span class="meta">Sheet: {{ doc.sheet }}</span>{% endif %}
+          {% if doc.row %}<span class="meta">Row: {{ doc.row }}</span>{% endif %}
+          {% if doc.page %}<span class="meta">Page: {{ doc.page }}</span>{% endif %}
+        </div>
+        <pre>{{ doc.content }}</pre>
+      </div>
+    {% endfor %}
+  {% else %}
+    <div class="empty">未找到匹配结果</div>
+  {% endif %}
+</div>
+
+<div id="facet-box" class="facet-list" hx-swap-oob="true">
+  {% if facets %}
+    {% for name, count in facets %}
+      <button class="facet"
+              hx-post="/search"
+              hx-include="#search-form"
+              hx-target="#results"
+              hx-swap="innerHTML"
+              onclick="document.querySelector('#search-form input[name=file_name]').value='{{ name }}'">
+        {{ name }} ({{ count }})
+      </button>
+    {% endfor %}
+  {% else %}
+    <div class="empty">暂无可过滤项</div>
+  {% endif %}
+</div>

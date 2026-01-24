@@ -7,6 +7,15 @@ This project implements a P0 personal knowledge base with:
 - Answers with citations
 - Local embedding service (preferred) with Bailian fallback
 
+## Requirements & environment
+- Python 3.10+ (tested on 3.12) and pip.
+- Network access to required services:
+  - Bailian (DashScope) API when `LLM_PROVIDER=bailian`.
+  - Local embedding service (OpenAI-compatible `/v1/embeddings`) when `EMBEDDING_PROVIDER=local`.
+  - Remote OCR service (`OCR_URL`) for PDF/image OCR.
+- Optional: remote Qdrant (`QDRANT_URL`). Default uses local storage under `index/<kb_id>/qdrant`.
+- Web UI loads HTMX from CDN; offline usage requires vendoring HTMX into `src/app/static/`.
+
 ## Quickstart (PowerShell)
 1) Activate venv: `\.\.venv\Scripts\Activate.ps1`
 2) Install deps: `python -m pip install -r requirements.txt`
@@ -14,6 +23,13 @@ This project implements a P0 personal knowledge base with:
 4) Ingest a folder: `python -m app.cli ingest --root "D:\docs\projectA" --kb default`
 5) re-ingest: `python -m app.cli ingest --root "D:\docs\projectA" --kb default`
 6) Ask a question: `python -m app.cli query --kb default "????"`
+
+## Web UI
+Start the UI server:
+```
+python -m app.web
+```
+Then open `http://localhost:8000` in a browser.
 
 ## How to add a folder
 You add a folder by running ingest with an absolute path:
@@ -53,6 +69,7 @@ Control providers via env:
 
 ## OCR
 - OCR uses a remote service via `OCR_URL` (multipart upload, default field `file`).
+- Local OCR (PaddleOCR) is not wired in P0; keep using remote OCR unless you extend the code.
 
 ## Storage layout
 - `data/manifest/<kb_id>/` : file status + ingest report + ingest.log
@@ -98,9 +115,26 @@ OCR_FILE_FIELD=file
 PROMPT_LOG_EMBEDDING=1
 PROMPT_LOG_RETRIEVAL=1
 
-# Chunking / BM25 / Qdrant
+# Logging
+RAG_LOG_LEVEL=INFO
+
+# Chunking / BM25
 RAG_CHUNK_SIZE=800
 RAG_CHUNK_OVERLAP=100
+RAG_ALPHA=0.7
 RAG_BM25_ENABLED=1
+RAG_BM25_K1=1.2
+RAG_BM25_B=0.75
+RAG_BM25_MAX_DOC_TOKENS=1024
+RAG_BM25_FETCH_K=24
+RAG_BM25_MAX_QUERY_TOKENS=128
+RAG_TOP_K=6
+RAG_MAX_CONTEXT_CHARS=12000
+RAG_EMBEDDING_BATCH_SIZE=16
+
+# Qdrant
 QDRANT_COLLECTION=kb_chunks
+QDRANT_PATH=index/qdrant
+QDRANT_URL=
+QDRANT_API_KEY=
 ```

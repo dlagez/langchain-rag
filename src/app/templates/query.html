@@ -1,0 +1,45 @@
+﻿{% extends "base.html" %}
+{% block content %}
+<section class="query-layout">
+  <aside class="side">
+    <div class="card">
+      <h2>过滤器</h2>
+      <p class="muted">点击文件名快速过滤</p>
+      <div id="facet-box" class="facet-list">
+        <div class="empty">暂无结果</div>
+      </div>
+    </div>
+  </aside>
+
+  <section class="main">
+    <div class="card">
+      <h1>知识库检索</h1>
+      <form id="search-form" class="form" hx-post="/search" hx-target="#results" hx-swap="innerHTML">
+        <label>
+          <span>KB ID</span>
+          <input type="text" name="kb_id" value="{{ kb_id }}" required />
+        </label>
+        <label>
+          <span>问题</span>
+          <input type="text" name="question" placeholder="请输入问题" required />
+        </label>
+        <div class="row">
+          <label>
+            <span>Top-K</span>
+            <input type="number" name="top_k" placeholder="0=默认" min="0" />
+          </label>
+          <label>
+            <span>文件名过滤（可选）</span>
+            <input type="text" name="file_name" placeholder="bug反馈表.xlsx" />
+          </label>
+        </div>
+        <button class="btn" type="submit">检索</button>
+      </form>
+    </div>
+
+    <div id="results" class="results">
+      <div class="card empty">尚未检索</div>
+    </div>
+  </section>
+</section>
+{% endblock %}

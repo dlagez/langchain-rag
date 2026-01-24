@@ -12,6 +12,10 @@ python-dotenv==1.2.1
 qdrant-client==1.16.2
 xlrd==2.0.1
 openpyxl==3.1.5
+fastapi==0.115.8
+uvicorn==0.30.6
+jinja2==3.1.4
+python-multipart==0.0.9
 
 # 下面两个包和langchain有冲突，等官方修了bug后再加回来，把ppocr和langchain分开，在另外的服务器开ocr服务。
 # paddleocr==3.3.3
