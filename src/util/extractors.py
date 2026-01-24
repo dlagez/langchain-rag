@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import os
 from pathlib import Path
@@ -53,16 +53,57 @@ def _extract_docx_text(path: Path) -> str:
     return _ensure_page_markers(_maybe_repair_mojibake(text))
 
 
-def _extract_excel_text(path: Path) -> str:
+def _extract_excel_rows(path: Path) -> list[dict]:
+    """从 Excel 提取行级结构，包含 sheet、row、cells、text、is_header。"""
     import pandas as pd
 
-    sheets = pd.read_excel(path, sheet_name=None, dtype=str)
-    parts = []
+    sheets = pd.read_excel(path, sheet_name=None, dtype=str, header=None)
+    rows: list[dict] = []
     for name, df in sheets.items():
         df = df.fillna("")
-        parts.append(f"[Sheet: {name}]")
-        parts.append(df.to_csv(sep="\t", index=False))
+        header_row = None
+        for idx, row in df.iterrows():
+            cells = [str(val).strip() if val is not None else "" for val in row.tolist()]
+            if all(cell == "" for cell in cells):
+                continue
+            text = "\t".join(cells).rstrip()
+            if header_row is None:
+                header_row = idx
+                is_header = True
+            else:
+                is_header = False
+            rows.append(
+                {
+                    "sheet": str(name),
+                    "row": int(idx) + 1,
+                    "cells": cells,
+                    "text": text,
+                    "is_header": is_header,
+                }
+            )
+    return rows
+
+
+def _excel_rows_to_text(rows: list[dict]) -> str:
+    """将行级结构还原为可读文本，保留 Sheet 分隔。"""
+    if not rows:
+        return ""
+    parts: list[str] = []
+    current_sheet = None
+    for row in rows:
+        sheet = row.get("sheet")
+        if sheet != current_sheet:
+            current_sheet = sheet
+            parts.append(f"[Sheet: {sheet}]")
+        text = row.get("text") or ""
+        if text:
+            parts.append(text)
     return _normalize_text("\n".join(parts))
+
+
+def _extract_excel_text(path: Path) -> str:
+    rows = _extract_excel_rows(path)
+    return _excel_rows_to_text(rows)
 
 
 def _extract_doc_with_textract(path: Path) -> str | None:

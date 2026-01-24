@@ -5,6 +5,8 @@ from typing import Iterable
 
 from langchain_core.documents import Document
 
+from util.date_utils import _append_date_tokens
+
 
 _HEADING_PATTERNS = (
     re.compile(r"^第[一二三四五六七八九十百千0-9]+[章节条款].*$"),
@@ -56,6 +58,16 @@ def _split_by_length(text: str, chunk_size: int, overlap: int) -> Iterable[str]:
         idx += step
 
 
+def _is_table_row_doc(metadata: dict) -> bool:
+    """判断是否为表格行级 Document（用于禁用二次切分）。"""
+    return metadata.get("sheet") is not None and metadata.get("row") is not None
+
+
+def _should_normalize_dates(metadata: dict) -> bool:
+    """仅对表格类文档启用日期标准化。"""
+    return metadata.get("source_type") in {"xls", "xlsx"} or _is_table_row_doc(metadata)
+
+
 def chunk_documents(
     docs: list[Document],
     *,
@@ -71,6 +83,19 @@ def chunk_documents(
         base_meta["kb_id"] = kb_id
         base_meta["doc_id"] = doc_id
         text = doc.page_content or ""
+        if _should_normalize_dates(base_meta):
+            text = _append_date_tokens(text)
+
+        if _is_table_row_doc(base_meta):
+            piece = text.strip()
+            if not piece:
+                continue
+            meta = dict(base_meta)
+            meta["chunk_id"] = chunk_id
+            chunks.append(Document(page_content=piece, metadata=meta))
+            chunk_id += 1
+            continue
+
         for section in _split_structured(text):
             for piece in _split_by_length(section, chunk_size, chunk_overlap):
                 piece = piece.strip()

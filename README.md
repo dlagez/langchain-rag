@@ -11,8 +11,9 @@ This project implements a P0 personal knowledge base with:
 1) Activate venv: `\.\.venv\Scripts\Activate.ps1`
 2) Install deps: `python -m pip install -r requirements.txt`
 3) Create `.env` (see `.env.example`)
-4) Ingest a folder: `python -m app.cli ingest --root "D:\docs\projectA" --kb kb_project_a`
-5) Ask a question: `python -m app.cli query --kb kb_project_a "????"`
+4) Ingest a folder: `python -m app.cli ingest --root "D:\docs\projectA" --kb default`
+5) re-ingest: `python -m app.cli ingest --root "D:\docs\projectA" --kb default`
+6) Ask a question: `python -m app.cli query --kb default "????"`
 
 ## How to add a folder
 You add a folder by running ingest with an absolute path:
@@ -58,6 +59,22 @@ Control providers via env:
 - `data/processed/<kb_id>/` : parsed text
 - `index/<kb_id>/` : Qdrant + BM25 index
 - `data/log/<kb_id>/` : ingest logs
+
+## Metadata fields (keep in sync with code)
+These fields are stored in chunk metadata and/or payload. When you add or change
+fields in code, update this section too.
+
+- `source` : original file path (absolute)
+- `source_type` : file type suffix (txt/pdf/docx/xlsx/etc.)
+- `doc_id` : relative path inside the KB root (e.g. `系统运维/bug反馈表.xlsx`)
+- `chunk_id` : chunk sequence id within the document
+- `page` : page number for paged sources (pdf/doc/docx)
+- `kb_id` : knowledge base id
+
+Optional / table-specific (when implemented):
+- `sheet` : Excel sheet name
+- `row` : Excel row number (1-based)
+- `is_header` : whether the row is a header
 
 ## Environment variables (P0)
 ```

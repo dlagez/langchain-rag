@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from collections import OrderedDict
 
@@ -10,8 +10,8 @@ from app.settings import Settings
 from kb.index import bm25_search, get_client_and_collection
 from providers.embed_bailian import embed_texts as embed_bailian
 from providers.embed_local import embed_texts as embed_local
-from util.prompt_logger import log_embedding_call
 from util.document_utils import _doc_signature
+from util.prompt_logger import log_embedding_call
 from util.vectorstore_utils import _docs_from_search_results, _fusion_rerank, _search_qdrant
 
 

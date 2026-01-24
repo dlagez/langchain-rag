@@ -166,6 +166,8 @@ def main() -> None:
             qdrant_root = ROOT / "index" / args.kb
         else:
             qdrant_root = ROOT / "index"
+        # Force local Qdrant path to avoid picking up a global QDRANT_PATH.
+        os.environ["QDRANT_PATH"] = str(qdrant_root / "qdrant")
         client = _get_qdrant_client(qdrant_root)
     total = _count_points(client, collection)
     if total is not None:
