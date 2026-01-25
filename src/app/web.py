@@ -139,18 +139,30 @@ _FILE_MENTION_RE = re.compile(
     re.IGNORECASE,
 )
 _TOKEN_RE = re.compile(r"[A-Za-z0-9]+|[\u4e00-\u9fff]+")
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]+")
+_MONTH_RE = re.compile(r"(\d{1,2})月(?:份)?")
 _FILTER_SPLIT_RE = re.compile(r"[,\n;，；|]+")
 
 
 def _question_tokens(question: str) -> list[str]:
     if not question:
         return []
-    tokens = []
+    tokens: set[str] = set()
     for token in _TOKEN_RE.findall(question):
         token = token.strip().lower()
         if len(token) >= 2:
-            tokens.append(token)
-    return tokens
+            tokens.add(token)
+    for chunk in _CJK_RE.findall(question):
+        if len(chunk) < 2:
+            continue
+        limit = min(3, len(chunk))
+        for size in range(2, limit + 1):
+            for idx in range(len(chunk) - size + 1):
+                tokens.add(chunk[idx : idx + size])
+    for match in _MONTH_RE.findall(question):
+        tokens.add(f"{match}月")
+        tokens.add(f"{match}月份")
+    return list(tokens)
 
 
 def _score_file_name(question: str, file_name: str, tokens: list[str]) -> int:
@@ -243,8 +255,15 @@ def _parse_file_filters(raw: str | None) -> list[str]:
 def _match_any_file_filter(source: str, filters: list[str]) -> bool:
     if not source or not filters:
         return False
+    source_name = Path(source).name.lower()
+    source_path = source.lower()
     for item in filters:
-        if item in source:
+        if not item:
+            continue
+        value = item.lower()
+        if source_name == value:
+            return True
+        if ("/" in value or "\\" in value) and source_path == value:
             return True
     return False
 

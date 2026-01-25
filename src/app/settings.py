@@ -132,7 +132,7 @@ class Settings:
             qdrant_url=os.getenv("QDRANT_URL"),
             qdrant_api_key=os.getenv("QDRANT_API_KEY"),
             qdrant_collection=os.getenv("QDRANT_COLLECTION", "kb_chunks"),
-            top_k=_env_int("RAG_TOP_K", 6),
+            top_k=_env_int("RAG_TOP_K", 10),
             max_context_chars=_env_int("RAG_MAX_CONTEXT_CHARS", 12000),
             embedding_batch_size=_env_int("RAG_EMBEDDING_BATCH_SIZE", 16),
         )
