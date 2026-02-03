@@ -1,0 +1,1408 @@
+{
+    "nightTab": true,
+    "version": "7.5.0",
+    "state": {
+        "language": "system",
+        "layout": {
+            "area": {
+                "header": {
+                    "width": 100,
+                    "justify": "center"
+                },
+                "bookmark": {
+                    "width": 100,
+                    "justify": "center"
+                }
+            },
+            "alignment": "center-center",
+            "order": "header-bookmark",
+            "direction": "vertical",
+            "size": 100,
+            "width": 78,
+            "padding": 36,
+            "gutter": 18,
+            "breakpoint": "xl",
+            "scrollbar": "auto",
+            "title": "",
+            "favicon": "",
+            "overscroll": {
+                "active": false,
+                "unblur": false
+            }
+        },
+        "header": {
+            "item": {
+                "justify": "left"
+            },
+            "greeting": {
+                "show": false,
+                "type": "good",
+                "custom": "",
+                "name": "",
+                "size": 100,
+                "newLine": false
+            },
+            "transitional": {
+                "show": false,
+                "type": "time-and-date",
+                "size": 100,
+                "newLine": false
+            },
+            "clock": {
+                "hour": {
+                    "show": true,
+                    "display": "number"
+                },
+                "minute": {
+                    "show": true,
+                    "display": "number"
+                },
+                "second": {
+                    "show": false,
+                    "display": "number"
+                },
+                "separator": {
+                    "show": true,
+                    "text": ""
+                },
+                "meridiem": {
+                    "show": false
+                },
+                "hour24": {
+                    "show": true
+                },
+                "size": 100,
+                "newLine": false
+            },
+            "date": {
+                "day": {
+                    "show": false,
+                    "display": "word",
+                    "weekStart": "monday",
+                    "length": "long"
+                },
+                "date": {
+                    "show": true,
+                    "display": "number",
+                    "ordinal": true
+                },
+                "month": {
+                    "show": true,
+                    "display": "word",
+                    "length": "short",
+                    "ordinal": true
+                },
+                "year": {
+                    "show": false,
+                    "display": "number"
+                },
+                "separator": {
+                    "show": true,
+                    "text": ""
+                },
+                "format": "date-month",
+                "size": 100,
+                "newLine": false
+            },
+            "search": {
+                "show": true,
+                "width": {
+                    "by": "auto",
+                    "size": 30
+                },
+                "engine": {
+                    "selected": "google",
+                    "custom": {
+                        "name": "",
+                        "url": "",
+                        "queryName": ""
+                    }
+                },
+                "text": {
+                    "justify": "center"
+                },
+                "size": 100,
+                "newLine": false,
+                "newTab": false
+            },
+            "order": [
+                "clock",
+                "date",
+                "search",
+                "toolbar"
+            ],
+            "edit": false
+        },
+        "bookmark": {
+            "size": 100,
+            "url": {
+                "show": true
+            },
+            "line": {
+                "show": true
+            },
+            "shadow": {
+                "show": true
+            },
+            "hoverScale": {
+                "show": true
+            },
+            "orientation": "bottom",
+            "style": "block",
+            "newTab": false,
+            "edit": false,
+            "add": false,
+            "show": true,
+            "item": {}
+        },
+        "group": {
+            "area": {
+                "justify": "left"
+            },
+            "order": "header-body",
+            "name": {
+                "size": 110
+            },
+            "toolbar": {
+                "size": 100
+            },
+            "edit": false,
+            "add": false
+        },
+        "toolbar": {
+            "location": "header",
+            "position": "bottom-right",
+            "size": 100,
+            "accent": {
+                "show": true
+            },
+            "add": {
+                "show": true
+            },
+            "edit": {
+                "show": true
+            },
+            "newLine": false
+        },
+        "theme": {
+            "color": {
+                "range": {
+                    "primary": {
+                        "h": 267,
+                        "s": 83
+                    }
+                },
+                "contrast": {
+                    "start": 8,
+                    "end": 96
+                },
+                "shades": 18
+            },
+            "accent": {
+                "hsl": {
+                    "h": 316,
+                    "s": 29,
+                    "l": 67
+                },
+                "rgb": {
+                    "r": 195,
+                    "g": 146,
+                    "b": 182
+                },
+                "random": {
+                    "active": false,
+                    "style": "any"
+                },
+                "cycle": {
+                    "active": false,
+                    "speed": 300,
+                    "step": 10
+                }
+            },
+            "font": {
+                "display": {
+                    "name": "",
+                    "weight": 400,
+                    "style": "normal"
+                },
+                "ui": {
+                    "name": "",
+                    "weight": 400,
+                    "style": "normal"
+                }
+            },
+            "background": {
+                "type": "gradient",
+                "color": {
+                    "hsl": {
+                        "h": 231,
+                        "s": 16,
+                        "l": 34
+                    },
+                    "rgb": {
+                        "r": 73,
+                        "g": 77,
+                        "b": 100
+                    }
+                },
+                "gradient": {
+                    "angle": 135,
+                    "start": {
+                        "hsl": {
+                            "h": 230,
+                            "s": 19,
+                            "l": 26
+                        },
+                        "rgb": {
+                            "r": 54,
+                            "g": 58,
+                            "b": 79
+                        }
+                    },
+                    "end": {
+                        "hsl": {
+                            "h": 232,
+                            "s": 23,
+                            "l": 18
+                        },
+                        "rgb": {
+                            "r": 36,
+                            "g": 39,
+                            "b": 58
+                        }
+                    }
+                },
+                "image": {
+                    "url": "",
+                    "blur": 0,
+                    "grayscale": 0,
+                    "scale": 100,
+                    "accent": 0,
+                    "opacity": 100,
+                    "vignette": {
+                        "opacity": 0,
+                        "start": 90,
+                        "end": 70
+                    }
+                },
+                "video": {
+                    "url": "",
+                    "blur": 0,
+                    "grayscale": 0,
+                    "scale": 100,
+                    "accent": 0,
+                    "opacity": 100,
+                    "vignette": {
+                        "opacity": 0,
+                        "start": 90,
+                        "end": 70
+                    }
+                }
+            },
+            "opacity": {
+                "general": 90
+            },
+            "layout": {
+                "color": {
+                    "by": "theme",
+                    "hsl": {
+                        "h": 230,
+                        "s": 13,
+                        "l": 41
+                    },
+                    "rgb": {
+                        "r": 91,
+                        "g": 96,
+                        "b": 120
+                    },
+                    "blur": 6,
+                    "opacity": 28
+                },
+                "divider": {
+                    "size": 0
+                }
+            },
+            "header": {
+                "color": {
+                    "by": "theme",
+                    "hsl": {
+                        "h": 230,
+                        "s": 19,
+                        "l": 26
+                    },
+                    "rgb": {
+                        "r": 54,
+                        "g": 58,
+                        "b": 79
+                    },
+                    "opacity": 28
+                },
+                "search": {
+                    "opacity": 78
+                }
+            },
+            "bookmark": {
+                "color": {
+                    "by": "theme",
+                    "opacity": 28,
+                    "hsl": {
+                        "h": 230,
+                        "s": 19,
+                        "l": 26
+                    },
+                    "rgb": {
+                        "r": 54,
+                        "g": 58,
+                        "b": 79
+                    }
+                },
+                "item": {
+                    "border": 1,
+                    "opacity": 100
+                }
+            },
+            "group": {
+                "toolbar": {
+                    "opacity": 98
+                }
+            },
+            "toolbar": {
+                "opacity": 98
+            },
+            "style": "dark",
+            "radius": 16,
+            "shadow": 95,
+            "shade": {
+                "opacity": 58,
+                "blur": 12
+            },
+            "custom": {
+                "all": [],
+                "edit": false
+            }
+        },
+        "search": false,
+        "modal": false,
+        "menu": true
+    },
+    "bookmark": [
+        {
+            "name": {
+                "text": "hysz",
+                "show": true
+            },
+            "collapse": false,
+            "toolbar": {
+                "openAll": {
+                    "show": true
+                },
+                "collapse": {
+                    "show": true
+                }
+            },
+            "items": [
+                {
+                    "url": "https://oa.hysz.co/home",
+                    "display": {
+                        "alignment": "center-center",
+                        "direction": "vertical",
+                        "order": "visual-name",
+                        "rotate": 0,
+                        "translate": {
+                            "x": 0,
+                            "y": 0
+                        },
+                        "gutter": 25,
+                        "name": {
+                            "show": true,
+                            "text": "OA",
+                            "size": 10
+                        },
+                        "visual": {
+                            "show": true,
+                            "type": "icon",
+                            "size": 28,
+                            "letter": {
+                                "text": "OA"
+                            },
+                            "icon": {
+                                "name": "clipboard",
+                                "prefix": "fas",
+                                "label": "Clipboard"
+                            },
+                            "image": {
+                                "url": ""
+                            },
+                            "shadow": {
+                                "size": 0
+                            }
+                        }
+                    },
+                    "accent": {
+                        "by": "theme",
+                        "hsl": {
+                            "h": 0,
+                            "s": 0,
+                            "l": 0
+                        },
+                        "rgb": {
+                            "r": 0,
+                            "g": 0,
+                            "b": 0
+                        }
+                    },
+                    "color": {
+                        "by": "theme",
+                        "hsl": {
+                            "h": 0,
+                            "s": 0,
+                            "l": 0
+                        },
+                        "rgb": {
+                            "r": 0,
+                            "g": 0,
+                            "b": 0
+                        },
+                        "opacity": 100
+                    },
+                    "background": {
+                        "show": false,
+                        "type": "image",
+                        "opacity": 100,
+                        "image": {
+                            "url": ""
+                        },
+                        "video": {
+                            "url": ""
+                        }
+                    },
+                    "border": 0,
+                    "shape": {
+                        "wide": false,
+                        "tall": false
+                    },
+                    "timestamp": 1770109578618
+                },
+                {
+                    "url": "https://www.hysz.co/home",
+                    "display": {
+                        "alignment": "center-center",
+                        "direction": "vertical",
+                        "order": "visual-name",
+                        "rotate": 0,
+                        "translate": {
+                            "x": 0,
+                            "y": 0
+                        },
+                        "gutter": 25,
+                        "name": {
+                            "show": true,
+                            "text": "HYSZ",
+                            "size": 10
+                        },
+                        "visual": {
+                            "show": true,
+                            "type": "icon",
+                            "size": 28,
+                            "letter": {
+                                "text": "HY"
+                            },
+                            "icon": {
+                                "name": "building",
+                                "prefix": "fas",
+                                "label": "Building"
+                            },
+                            "image": {
+                                "url": ""
+                            },
+                            "shadow": {
+                                "size": 0
+                            }
+                        }
+                    },
+                    "accent": {
+                        "by": "theme",
+                        "hsl": {
+                            "h": 0,
+                            "s": 0,
+                            "l": 0
+                        },
+                        "rgb": {
+                            "r": 0,
+                            "g": 0,
+                            "b": 0
+                        }
+                    },
+                    "color": {
+                        "by": "theme",
+                        "hsl": {
+                            "h": 0,
+                            "s": 0,
+                            "l": 0
+                        },
+                        "rgb": {
+                            "r": 0,
+                            "g": 0,
+                            "b": 0
+                        },
+                        "opacity": 100
+                    },
+                    "background": {
+                        "show": false,
+                        "type": "image",
+                        "opacity": 100,
+                        "image": {
+                            "url": ""
+                        },
+                        "video": {
+                            "url": ""
+                        }
+                    },
+                    "border": 0,
+                    "shape": {
+                        "wide": false,
+                        "tall": false
+                    },
+                    "timestamp": 1770109578619
+                },
+                {
+                    "url": "https://mid-end.hysz.co/tenantManagement",
+                    "display": {
+                        "alignment": "center-center",
+                        "direction": "vertical",
+                        "order": "visual-name",
+                        "rotate": 0,
+                        "translate": {
+                            "x": 0,
+                            "y": 0
+                        },
+                        "gutter": 25,
+                        "name": {
+                            "show": true,
+                            "text": "Tenant",
+                            "size": 10
+                        },
+                        "visual": {
+                            "show": true,
+                            "type": "icon",
+                            "size": 28,
+                            "letter": {
+                                "text": "TE"
+                            },
+                            "icon": {
+                                "name": "users",
+                                "prefix": "fas",
+                                "label": "Users"
+                            },
+                            "image": {
+                                "url": ""
+                            },
+                            "shadow": {
+                                "size": 0
+                            }
+                        }
+                    },
+                    "accent": {
+                        "by": "theme",
+                        "hsl": {
+                            "h": 0,
+                            "s": 0,
+                            "l": 0
+                        },
+                        "rgb": {
+                            "r": 0,
+                            "g": 0,
+                            "b": 0
+                        }
+                    },
+                    "color": {
+                        "by": "theme",
+                        "hsl": {
+                            "h": 0,
+                            "s": 0,
+                            "l": 0
+                        },
+                        "rgb": {
+                            "r": 0,
+                            "g": 0,
+                            "b": 0
+                        },
+                        "opacity": 100
+                    },
+                    "background": {
+                        "show": false,
+                        "type": "image",
+                        "opacity": 100,
+                        "image": {
+                            "url": ""
+                        },
+                        "video": {
+                            "url": ""
+                        }
+                    },
+                    "border": 0,
+                    "shape": {
+                        "wide": false,
+                        "tall": false
+                    },
+                    "timestamp": 1770109578620
+                },
+                {
+                    "url": "https://ai-platform.hysz.co/sceneManagement/sceneTemplate",
+                    "display": {
+                        "alignment": "center-center",
+                        "direction": "vertical",
+                        "order": "visual-name",
+                        "rotate": 0,
+                        "translate": {
+                            "x": 0,
+                            "y": 0
+                        },
+                        "gutter": 25,
+                        "name": {
+                            "show": true,
+                            "text": "AI Scene",
+                            "size": 10
+                        },
+                        "visual": {
+                            "show": true,
+                            "type": "icon",
+                            "size": 28,
+                            "letter": {
+                                "text": "AI"
+                            },
+                            "icon": {
+                                "name": "brain",
+                                "prefix": "fas",
+                                "label": "Brain"
+                            },
+                            "image": {
+                                "url": ""
+                            },
+                            "shadow": {
+                                "size": 0
+                            }
+                        }
+                    },
+                    "accent": {
+                        "by": "theme",
+                        "hsl": {
+                            "h": 0,
+                            "s": 0,
+                            "l": 0
+                        },
+                        "rgb": {
+                            "r": 0,
+                            "g": 0,
+                            "b": 0
+                        }
+                    },
+                    "color": {
+                        "by": "theme",
+                        "hsl": {
+                            "h": 0,
+                            "s": 0,
+                            "l": 0
+                        },
+                        "rgb": {
+                            "r": 0,
+                            "g": 0,
+                            "b": 0
+                        },
+                        "opacity": 100
+                    },
+                    "background": {
+                        "show": false,
+                        "type": "image",
+                        "opacity": 100,
+                        "image": {
+                            "url": ""
+                        },
+                        "video": {
+                            "url": ""
+                        }
+                    },
+                    "border": 0,
+                    "shape": {
+                        "wide": false,
+                        "tall": false
+                    },
+                    "timestamp": 1770109578621
+                }
+            ]
+        },
+        {
+            "name": {
+                "text": "fnos",
+                "show": true
+            },
+            "collapse": false,
+            "toolbar": {
+                "openAll": {
+                    "show": true
+                },
+                "collapse": {
+                    "show": true
+                }
+            },
+            "items": [
+                {
+                    "url": "http://or708oi9321.vicp.fun:5666",
+                    "display": {
+                        "alignment": "center-center",
+                        "direction": "vertical",
+                        "order": "visual-name",
+                        "rotate": 0,
+                        "translate": {
+                            "x": 0,
+                            "y": 0
+                        },
+                        "gutter": 25,
+                        "name": {
+                            "show": true,
+                            "text": "fnos",
+                            "size": 10
+                        },
+                        "visual": {
+                            "show": true,
+                            "type": "icon",
+                            "size": 28,
+                            "letter": {
+                                "text": "FN"
+                            },
+                            "icon": {
+                                "name": "server",
+                                "prefix": "fas",
+                                "label": "Server"
+                            },
+                            "image": {
+                                "url": ""
+                            },
+                            "shadow": {
+                                "size": 0
+                            }
+                        }
+                    },
+                    "accent": {
+                        "by": "theme",
+                        "hsl": {
+                            "h": 0,
+                            "s": 0,
+                            "l": 0
+                        },
+                        "rgb": {
+                            "r": 0,
+                            "g": 0,
+                            "b": 0
+                        }
+                    },
+                    "color": {
+                        "by": "theme",
+                        "hsl": {
+                            "h": 0,
+                            "s": 0,
+                            "l": 0
+                        },
+                        "rgb": {
+                            "r": 0,
+                            "g": 0,
+                            "b": 0
+                        },
+                        "opacity": 100
+                    },
+                    "background": {
+                        "show": false,
+                        "type": "image",
+                        "opacity": 100,
+                        "image": {
+                            "url": ""
+                        },
+                        "video": {
+                            "url": ""
+                        }
+                    },
+                    "border": 0,
+                    "shape": {
+                        "wide": false,
+                        "tall": false
+                    },
+                    "timestamp": 1770107757979
+                },
+                {
+                    "url": "http://or708oi9321.vicp.fun:5666/v",
+                    "display": {
+                        "alignment": "center-center",
+                        "direction": "vertical",
+                        "order": "visual-name",
+                        "rotate": 0,
+                        "translate": {
+                            "x": 0,
+                            "y": 0
+                        },
+                        "gutter": 25,
+                        "name": {
+                            "show": true,
+                            "text": "fn tv",
+                            "size": 10
+                        },
+                        "visual": {
+                            "show": true,
+                            "type": "icon",
+                            "size": 28,
+                            "letter": {
+                                "text": "FT"
+                            },
+                            "icon": {
+                                "name": "tv",
+                                "prefix": "fas",
+                                "label": "TV"
+                            },
+                            "image": {
+                                "url": ""
+                            },
+                            "shadow": {
+                                "size": 0
+                            }
+                        }
+                    },
+                    "accent": {
+                        "by": "theme",
+                        "hsl": {
+                            "h": 0,
+                            "s": 0,
+                            "l": 0
+                        },
+                        "rgb": {
+                            "r": 0,
+                            "g": 0,
+                            "b": 0
+                        }
+                    },
+                    "color": {
+                        "by": "theme",
+                        "hsl": {
+                            "h": 0,
+                            "s": 0,
+                            "l": 0
+                        },
+                        "rgb": {
+                            "r": 0,
+                            "g": 0,
+                            "b": 0
+                        },
+                        "opacity": 100
+                    },
+                    "background": {
+                        "show": false,
+                        "type": "image",
+                        "opacity": 100,
+                        "image": {
+                            "url": ""
+                        },
+                        "video": {
+                            "url": ""
+                        }
+                    },
+                    "border": 0,
+                    "shape": {
+                        "wide": false,
+                        "tall": false
+                    },
+                    "timestamp": 1770107757980
+                },
+                {
+                    "url": "http://or708oi9321.vicp.fun:5244/",
+                    "display": {
+                        "alignment": "center-center",
+                        "direction": "vertical",
+                        "order": "visual-name",
+                        "rotate": 0,
+                        "translate": {
+                            "x": 0,
+                            "y": 0
+                        },
+                        "gutter": 25,
+                        "name": {
+                            "show": true,
+                            "text": "alist",
+                            "size": 10
+                        },
+                        "visual": {
+                            "show": true,
+                            "type": "icon",
+                            "size": 28,
+                            "letter": {
+                                "text": "AL"
+                            },
+                            "icon": {
+                                "name": "folder-open",
+                                "prefix": "fas",
+                                "label": "Folder Open"
+                            },
+                            "image": {
+                                "url": ""
+                            },
+                            "shadow": {
+                                "size": 0
+                            }
+                        }
+                    },
+                    "accent": {
+                        "by": "theme",
+                        "hsl": {
+                            "h": 0,
+                            "s": 0,
+                            "l": 0
+                        },
+                        "rgb": {
+                            "r": 0,
+                            "g": 0,
+                            "b": 0
+                        }
+                    },
+                    "color": {
+                        "by": "theme",
+                        "hsl": {
+                            "h": 0,
+                            "s": 0,
+                            "l": 0
+                        },
+                        "rgb": {
+                            "r": 0,
+                            "g": 0,
+                            "b": 0
+                        },
+                        "opacity": 100
+                    },
+                    "background": {
+                        "show": false,
+                        "type": "image",
+                        "opacity": 100,
+                        "image": {
+                            "url": ""
+                        },
+                        "video": {
+                            "url": ""
+                        }
+                    },
+                    "border": 0,
+                    "shape": {
+                        "wide": false,
+                        "tall": false
+                    },
+                    "timestamp": 1770107757981
+                },
+                {
+                    "url": "http://or708oi9321.vicp.fun:9000/#!/home",
+                    "display": {
+                        "alignment": "center-center",
+                        "direction": "vertical",
+                        "order": "visual-name",
+                        "rotate": 0,
+                        "translate": {
+                            "x": 0,
+                            "y": 0
+                        },
+                        "gutter": 25,
+                        "name": {
+                            "show": true,
+                            "text": "portainer",
+                            "size": 10
+                        },
+                        "visual": {
+                            "show": true,
+                            "type": "icon",
+                            "size": 28,
+                            "letter": {
+                                "text": "PO"
+                            },
+                            "icon": {
+                                "name": "boxes",
+                                "prefix": "fas",
+                                "label": "Boxes"
+                            },
+                            "image": {
+                                "url": ""
+                            },
+                            "shadow": {
+                                "size": 0
+                            }
+                        }
+                    },
+                    "accent": {
+                        "by": "theme",
+                        "hsl": {
+                            "h": 0,
+                            "s": 0,
+                            "l": 0
+                        },
+                        "rgb": {
+                            "r": 0,
+                            "g": 0,
+                            "b": 0
+                        }
+                    },
+                    "color": {
+                        "by": "theme",
+                        "hsl": {
+                            "h": 0,
+                            "s": 0,
+                            "l": 0
+                        },
+                        "rgb": {
+                            "r": 0,
+                            "g": 0,
+                            "b": 0
+                        },
+                        "opacity": 100
+                    },
+                    "background": {
+                        "show": false,
+                        "type": "image",
+                        "opacity": 100,
+                        "image": {
+                            "url": ""
+                        },
+                        "video": {
+                            "url": ""
+                        }
+                    },
+                    "border": 0,
+                    "shape": {
+                        "wide": false,
+                        "tall": false
+                    },
+                    "timestamp": 1770107757982
+                },
+                {
+                    "url": "http://or708oi9321.vicp.fun:8200",
+                    "display": {
+                        "alignment": "center-center",
+                        "direction": "vertical",
+                        "order": "visual-name",
+                        "rotate": 0,
+                        "translate": {
+                            "x": 0,
+                            "y": 0
+                        },
+                        "gutter": 25,
+                        "name": {
+                            "show": true,
+                            "text": "Duplicati",
+                            "size": 10
+                        },
+                        "visual": {
+                            "show": true,
+                            "type": "icon",
+                            "size": 28,
+                            "letter": {
+                                "text": "DU"
+                            },
+                            "icon": {
+                                "name": "database",
+                                "prefix": "fas",
+                                "label": "Database"
+                            },
+                            "image": {
+                                "url": ""
+                            },
+                            "shadow": {
+                                "size": 0
+                            }
+                        }
+                    },
+                    "accent": {
+                        "by": "theme",
+                        "hsl": {
+                            "h": 0,
+                            "s": 0,
+                            "l": 0
+                        },
+                        "rgb": {
+                            "r": 0,
+                            "g": 0,
+                            "b": 0
+                        }
+                    },
+                    "color": {
+                        "by": "theme",
+                        "hsl": {
+                            "h": 0,
+                            "s": 0,
+                            "l": 0
+                        },
+                        "rgb": {
+                            "r": 0,
+                            "g": 0,
+                            "b": 0
+                        },
+                        "opacity": 100
+                    },
+                    "background": {
+                        "show": false,
+                        "type": "image",
+                        "opacity": 100,
+                        "image": {
+                            "url": ""
+                        },
+                        "video": {
+                            "url": ""
+                        }
+                    },
+                    "border": 0,
+                    "shape": {
+                        "wide": false,
+                        "tall": false
+                    },
+                    "timestamp": 1770107757983
+                },
+                {
+                    "url": "http://or708oi9321.vicp.fun:2283",
+                    "display": {
+                        "alignment": "center-center",
+                        "direction": "vertical",
+                        "order": "visual-name",
+                        "rotate": 0,
+                        "translate": {
+                            "x": 0,
+                            "y": 0
+                        },
+                        "gutter": 25,
+                        "name": {
+                            "show": true,
+                            "text": "immich",
+                            "size": 10
+                        },
+                        "visual": {
+                            "show": true,
+                            "type": "icon",
+                            "size": 28,
+                            "letter": {
+                                "text": "IM"
+                            },
+                            "icon": {
+                                "name": "images",
+                                "prefix": "far",
+                                "label": "Images"
+                            },
+                            "image": {
+                                "url": ""
+                            },
+                            "shadow": {
+                                "size": 0
+                            }
+                        }
+                    },
+                    "accent": {
+                        "by": "theme",
+                        "hsl": {
+                            "h": 0,
+                            "s": 0,
+                            "l": 0
+                        },
+                        "rgb": {
+                            "r": 0,
+                            "g": 0,
+                            "b": 0
+                        }
+                    },
+                    "color": {
+                        "by": "theme",
+                        "hsl": {
+                            "h": 0,
+                            "s": 0,
+                            "l": 0
+                        },
+                        "rgb": {
+                            "r": 0,
+                            "g": 0,
+                            "b": 0
+                        },
+                        "opacity": 100
+                    },
+                    "background": {
+                        "show": false,
+                        "type": "image",
+                        "opacity": 100,
+                        "image": {
+                            "url": ""
+                        },
+                        "video": {
+                            "url": ""
+                        }
+                    },
+                    "border": 0,
+                    "shape": {
+                        "wide": false,
+                        "tall": false
+                    },
+                    "timestamp": 1770107757984
+                },
+                {
+                    "url": "http://or708oi9321.vicp.fun:8384",
+                    "display": {
+                        "alignment": "center-center",
+                        "direction": "vertical",
+                        "order": "visual-name",
+                        "rotate": 0,
+                        "translate": {
+                            "x": 0,
+                            "y": 0
+                        },
+                        "gutter": 25,
+                        "name": {
+                            "show": true,
+                            "text": "syncthing",
+                            "size": 10
+                        },
+                        "visual": {
+                            "show": true,
+                            "type": "icon",
+                            "size": 28,
+                            "letter": {
+                                "text": "SY"
+                            },
+                            "icon": {
+                                "name": "sync-alt",
+                                "prefix": "fas",
+                                "label": "Sync"
+                            },
+                            "image": {
+                                "url": ""
+                            },
+                            "shadow": {
+                                "size": 0
+                            }
+                        }
+                    },
+                    "accent": {
+                        "by": "theme",
+                        "hsl": {
+                            "h": 0,
+                            "s": 0,
+                            "l": 0
+                        },
+                        "rgb": {
+                            "r": 0,
+                            "g": 0,
+                            "b": 0
+                        }
+                    },
+                    "color": {
+                        "by": "theme",
+                        "hsl": {
+                            "h": 0,
+                            "s": 0,
+                            "l": 0
+                        },
+                        "rgb": {
+                            "r": 0,
+                            "g": 0,
+                            "b": 0
+                        },
+                        "opacity": 100
+                    },
+                    "background": {
+                        "show": false,
+                        "type": "image",
+                        "opacity": 100,
+                        "image": {
+                            "url": ""
+                        },
+                        "video": {
+                            "url": ""
+                        }
+                    },
+                    "border": 0,
+                    "shape": {
+                        "wide": false,
+                        "tall": false
+                    },
+                    "timestamp": 1770107757985
+                },
+                {
+                    "url": "http://or708oi9321.vicp.fun:3010",
+                    "display": {
+                        "alignment": "center-center",
+                        "direction": "vertical",
+                        "order": "visual-name",
+                        "rotate": 0,
+                        "translate": {
+                            "x": 0,
+                            "y": 0
+                        },
+                        "gutter": 25,
+                        "name": {
+                            "show": true,
+                            "text": "pansou",
+                            "size": 10
+                        },
+                        "visual": {
+                            "show": true,
+                            "type": "icon",
+                            "size": 28,
+                            "letter": {
+                                "text": "PA"
+                            },
+                            "icon": {
+                                "name": "search",
+                                "prefix": "fas",
+                                "label": "Search"
+                            },
+                            "image": {
+                                "url": ""
+                            },
+                            "shadow": {
+                                "size": 0
+                            }
+                        }
+                    },
+                    "accent": {
+                        "by": "theme",
+                        "hsl": {
+                            "h": 0,
+                            "s": 0,
+                            "l": 0
+                        },
+                        "rgb": {
+                            "r": 0,
+                            "g": 0,
+                            "b": 0
+                        }
+                    },
+                    "color": {
+                        "by": "theme",
+                        "hsl": {
+                            "h": 0,
+                            "s": 0,
+                            "l": 0
+                        },
+                        "rgb": {
+                            "r": 0,
+                            "g": 0,
+                            "b": 0
+                        },
+                        "opacity": 100
+                    },
+                    "background": {
+                        "show": false,
+                        "type": "image",
+                        "opacity": 100,
+                        "image": {
+                            "url": ""
+                        },
+                        "video": {
+                            "url": ""
+                        }
+                    },
+                    "border": 0,
+                    "shape": {
+                        "wide": false,
+                        "tall": false
+                    },
+                    "timestamp": 1770107757986
+                }
+            ]
+        }
+    ]
+}
