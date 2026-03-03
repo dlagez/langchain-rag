@@ -21,7 +21,16 @@ def build_ocr(settings: Settings) -> _LazyOCR:
 def extract_documents(
     path: Path,
     ocr: _LazyOCR,
+    settings: Settings,
     *,
     image_dpi: int = 200,
 ) -> tuple[list[Document], str]:
-    return _extract_text_from_file(path, ocr, image_dpi=image_dpi)
+    return _extract_text_from_file(
+        path,
+        ocr,
+        image_dpi=image_dpi,
+        ocr_concurrency=settings.ocr_concurrency,
+        ocr_page_timeout=settings.ocr_page_timeout,
+        ocr_max_retries=settings.ocr_max_retries,
+        ocr_retry_backoff_ms=settings.ocr_retry_backoff_ms,
+    )

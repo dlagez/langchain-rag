@@ -131,7 +131,7 @@ def ingest_kb(root_path: Path, *, kb_id: str | None, settings: Settings) -> str:
 
         doc_id = rel_path.as_posix()
         try:
-            docs, text = extract_documents(path, ocr, image_dpi=200)
+            docs, text = extract_documents(path, ocr, settings, image_dpi=200)
         except Exception as exc:
             logger.warning("Parse failed for %s: %s", path, exc)
             report.errors.append(

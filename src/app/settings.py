@@ -57,6 +57,10 @@ class Settings:
     ocr_url: str
     ocr_timeout: float
     ocr_file_field: str
+    ocr_concurrency: int
+    ocr_page_timeout: float
+    ocr_max_retries: int
+    ocr_retry_backoff_ms: int
 
     chunk_size: int
     chunk_overlap: int
@@ -120,6 +124,10 @@ class Settings:
             ocr_url=os.getenv("OCR_URL", "http://10.0.22.109:8081/ocr"),
             ocr_timeout=_env_float("OCR_TIMEOUT", 30.0),
             ocr_file_field=os.getenv("OCR_FILE_FIELD", "file"),
+            ocr_concurrency=max(1, _env_int("OCR_CONCURRENCY", 4)),
+            ocr_page_timeout=max(1.0, _env_float("OCR_PAGE_TIMEOUT", _env_float("OCR_TIMEOUT", 30.0))),
+            ocr_max_retries=max(0, _env_int("OCR_MAX_RETRIES", 1)),
+            ocr_retry_backoff_ms=max(0, _env_int("OCR_RETRY_BACKOFF_MS", 300)),
             chunk_size=_env_int("RAG_CHUNK_SIZE", 800),
             chunk_overlap=_env_int("RAG_CHUNK_OVERLAP", 100),
             alpha=_env_float("RAG_ALPHA", 0.7),

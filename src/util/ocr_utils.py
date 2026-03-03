@@ -43,8 +43,19 @@ def _extract_text_from_file(
     path: Path,
     ocr: _LazyOCR,
     image_dpi: int = 200,
+    ocr_concurrency: int = 1,
+    ocr_page_timeout: float | None = None,
+    ocr_max_retries: int = 0,
+    ocr_retry_backoff_ms: int = 0,
 ) -> tuple[list[Document], str]:
     from .document_extractor import DocumentTextExtractor
 
-    extractor = DocumentTextExtractor(ocr, image_dpi=image_dpi)
+    extractor = DocumentTextExtractor(
+        ocr,
+        image_dpi=image_dpi,
+        ocr_concurrency=ocr_concurrency,
+        ocr_page_timeout=ocr_page_timeout,
+        ocr_max_retries=ocr_max_retries,
+        ocr_retry_backoff_ms=ocr_retry_backoff_ms,
+    )
     return extractor.extract_text(path)

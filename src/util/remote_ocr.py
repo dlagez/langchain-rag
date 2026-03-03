@@ -36,7 +36,12 @@ class RemoteOCRClient:
             or _env_first(["OCR_FILE_FIELD", "PPOCR_FILE_FIELD", "PADDLEX_OCR_FILE_FIELD"], "file")
         ).strip()
 
-    def _post_multipart(self, image_bytes: bytes, filename: str) -> dict[str, Any]:
+    def _post_multipart(
+        self,
+        image_bytes: bytes,
+        filename: str,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
         boundary = f"----ocrboundary{os.urandom(8).hex()}"
         mime = "image/png"
         guess, _ = mimetypes.guess_type(filename)
@@ -59,14 +64,15 @@ class RemoteOCRClient:
         )
         request_info = {
             "url": self._url,
-            "timeout": self._timeout,
+            "timeout": timeout if timeout is not None else self._timeout,
             "file_field": self._file_field,
             "filename": filename,
             "mime": mime,
             "bytes_len": len(image_bytes),
         }
+        timeout_value = self._timeout if timeout is None else float(timeout)
         try:
-            with request.urlopen(req, timeout=self._timeout) as resp:
+            with request.urlopen(req, timeout=timeout_value) as resp:
                 raw = resp.read().decode("utf-8", errors="replace")
         except error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
@@ -201,12 +207,21 @@ class RemoteOCRClient:
         _walk(payload)
         return texts
 
-    def ocr_image_bytes(self, image_bytes: bytes, filename: str = "image.png") -> list[str]:
-        response = self._post_multipart(image_bytes, filename)
+    def ocr_image_bytes(
+        self,
+        image_bytes: bytes,
+        filename: str = "image.png",
+        timeout: float | None = None,
+    ) -> list[str]:
+        response = self._post_multipart(image_bytes, filename, timeout=timeout)
         return self._extract_texts(response)
 
-    def ocr_image_path(self, image_path):
+    def ocr_image_path(self, image_path, timeout: float | None = None):
         image_path = Path(image_path)
         if not image_path.exists():
             raise FileNotFoundError(f"Image not found: {image_path}")
-        return self.ocr_image_bytes(image_path.read_bytes(), filename=image_path.name)
+        return self.ocr_image_bytes(
+            image_path.read_bytes(),
+            filename=image_path.name,
+            timeout=timeout,
+        )
